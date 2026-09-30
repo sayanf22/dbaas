@@ -4,8 +4,10 @@
 name: ci
 
 on:
+  # Every branch push gets CI (work lands on branches first); pull requests from forks too. The run gets no
+  # secrets either way (70-ci.md), so running it on any branch is safe.
   push:
-    branches: [main]
+    branches: ["**"]
   pull_request:
 
 permissions:
