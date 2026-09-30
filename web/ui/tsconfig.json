@@ -1,0 +1,10 @@
+// Type-check configuration for the shared UI package: its components (TSX) and the Node post-build
+// script (checked as JS via `// @ts-check`). Compiler options come from ../tsconfig.base.json.
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // The CSP script uses node:fs/node:crypto; components use React's types from their imports.
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.mjs"]
+}

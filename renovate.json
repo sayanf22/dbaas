@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Dependency updates for dbcloud (plan/02 'Dependency updates'): Go modules, Cargo, pnpm, Dockerfile digests, GitHub Actions SHAs and the pinned tool versions. Every update is a PR that must pass CI; nothing auto-merges.",
+  "extends": [
+    "config:recommended",
+    "docker:pinDigests",
+    "helpers:pinGitHubActionDigestsToSemver",
+    ":semanticCommits"
+  ],
+  "minimumReleaseAge": "3 days",
+  "prConcurrentLimit": 5,
+  "postUpdateOptions": ["gomodTidy"],
+  "ignorePaths": ["third_party/**", "deploy/vendor/**"],
+  "packageRules": [
+    {
+      "description": "Security updates skip the release-age wait.",
+      "matchCategories": ["security"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "K3s and kubectl stay on the 1.36 minor until a planned upgrade (conformance + CNPG smoke first, 70-ci.md).",
+      "matchPackageNames": ["k3s-io/k3s", "rancher/k3s", "kubernetes/kubernetes"],
+      "allowedVersions": "/^v?1\\.36\\./"
+    },
+    {
+      "description": "Next.js stays on 16.3.x (50-web.md).",
+      "matchPackageNames": ["next", "eslint-config-next"],
+      "allowedVersions": "/^16\\.3\\./"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "tools.versions: each KEY=version line is preceded by '# renovate: datasource=... depName=...'.",
+      "managerFilePatterns": ["/^tools\\.versions$/"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(\\s+extractVersion=(?<extractVersion>\\S+))?\\n[A-Z0-9_]+=(?<currentValue>\\S+)"
+      ]
+    }
+  ]
+}

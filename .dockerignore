@@ -1,0 +1,18 @@
+# Keep build contexts small and free of secrets (55-containers.md).
+.git
+.github
+.kiro
+.local
+.env
+.env.*
+*.kubeconfig
+*.agekey
+plan
+third_party
+deploy
+web
+node_modules
+**/target
+**/out
+**/.next
+coverage

@@ -1,0 +1,58 @@
+# Developer entry points (plan/05 §6). Run inside WSL Ubuntu: `task <name>`; `task --list` shows them all.
+# Every task calls the same scripts CI uses, so a green local run predicts a green CI run.
+version: "3"
+
+tasks:
+  tools:
+    desc: Install the pinned CLI tools into ~/.local/bin (checksum-verified)
+    cmds: [bash hack/install-tools.sh]
+
+  vendor:
+    desc: Fetch/verify pinned upstream manifests, image digests and source clones
+    cmds: [bash hack/vendor.sh]
+
+  hooks:
+    desc: Install the git pre-commit secret scan for this clone
+    cmds: [ln -sf ../../hack/pre-commit.sh .git/hooks/pre-commit]
+
+  lint:
+    desc: All linters (Go, Rust, web, shell, manifests, secrets)
+    cmds:
+      - golangci-lint run ./...
+      - cd gateway && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings
+      - pnpm run lint && pnpm run typecheck
+      - shellcheck hack/*.sh
+      - bash hack/check-secrets.sh
+      - bash hack/check-manifests.sh
+      - actionlint
+
+  test:
+    desc: Unit tests (Go with the race detector, Rust with nextest)
+    cmds:
+      - go test -race -count=1 ./...
+      - cd gateway && cargo nextest run --locked
+
+  build:
+    desc: Build Go binaries, the gateway and the static web exports
+    cmds:
+      - go build -trimpath -o bin/ ./cmd/...
+      - cd gateway && cargo build --release --locked
+      - pnpm run build
+
+  images:
+    desc: Build the local container images (amd64)
+    cmds:
+      - docker buildx build --load -f build/go.Dockerfile --build-arg BINARY=control-api -t dbcloud/control-api:dev .
+      - docker buildx build --load -t dbcloud/pg-gateway:dev gateway
+
+  cell:up:
+    desc: Start the local starter cell (k3d + cert-manager + CNPG + Barman plugin + SeaweedFS)
+    cmds: [bash hack/cell.sh up]
+
+  cell:down:
+    desc: Delete the local starter cell
+    cmds: [bash hack/cell.sh down]
+
+  cell:status:
+    desc: Show nodes and Postgres clusters of the local cell
+    cmds: [bash hack/cell.sh status]

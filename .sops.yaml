@@ -1,0 +1,10 @@
+# SOPS rules (60-infrastructure.md "Secrets"): every Kubernetes Secret in git is encrypted for exactly one
+# cell's age public key, chosen by path. Only data/stringData values are encrypted, so reviews still see
+# names and keys. Private keys never enter git: the local key lives in .local/ (git-ignored), a real cell's
+# key only in its `sops-age` Secret in flux-system and in the password manager.
+creation_rules:
+  # Local k3d starter cell (development only; the key can be regenerated freely).
+  - path_regex: ^deploy/flux/clusters/local/.*secrets/.*\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1rwsp76w4mc8ksxdmx2lewgudx080gafzzv2aw4yveg46cyyhxqjsw76lhh
+  # Cell c1: rule added in Step 1.2 with c1's public key, generated on the owner's machine.

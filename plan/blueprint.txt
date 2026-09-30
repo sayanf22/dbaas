@@ -1,0 +1,1133 @@
+=====================================================================================================
+REVISION 4.0 (2026-09-29) - K3S ON PROVIDER-NEUTRAL VMS + SUPABASE (ADMIN) + CLOUDFLARE, <= Rs 9,000/MONTH
+=====================================================================================================
+This file is the text of Production_PostgreSQL_DBaaS_Blueprint_PDF3.pdf with amendments applied inline.
+Amended lines are marked [Rev 4.0] (latest). Older markers [Rev 3.1]-[Rev 3.3] (Oracle OKE designs) were
+replaced by Rev 4.0 text; where an older marker remains, the Rev 4.0 summary below wins.
+Full detail lives in plan/*.md: README.md, 01-architecture.md, 02-technology-stack.md, 03-cost-model.md,
+04-build-plan.md, 05-dev-environment-and-downloads.md, 06-decision-records.md, 07-engineering-standards.md
+(+ .kiro/steering/).
+
+Summary of the current design (Rev 4.0):
+  - Back to K3s, as in the original PDF. A cell = one K3s v1.36 cluster of 3 Linux VMs in ONE provider and
+    ONE region on a private network: cp-1 (2 vCPU / 4 GB, control plane only) + node-1, node-2 (8 vCPU /
+    24 GB / 200 GB NVMe, control plane + platform + tenants). 3 servers with embedded etcd; growth nodes
+    join as agents. Oracle Cloud is no longer used.
+  - Provider-neutral: no provider chosen yet. Any provider passing the VM checklist (plan/03 §2.1) within
+    Rs 5,600/month for the cell; in practice the value-VPS class. Everything is built locally first (k3d).
+  - A K3s server on a small VM with the rest on AWS/GCP is technically possible but not used: embedded etcd
+    needs all servers on one private network, cross-cloud traffic is billed, a broken link freezes the
+    cluster, and hyperscaler VMs cost 5-6x the budget. AWS/GCP can be separate cells later.
+  - Budget: whole platform <= Rs 9,000/month (launch ~Rs 5,700-5,900; ~Rs 8,100-8,300 with Supabase Pro).
+  - Plans: base 0.1 vCPU (burst 0.5) / 512 MiB / 5 GB Rs 299 + GST; plus 0.25 (1) / 1 GiB / 10 GB Rs 699;
+    premium 0.5 (1) / 2 GiB / 20 GB Rs 1,399; 7-day PITR on every plan. A cell holds ~53 base tenants.
+  - Networking: flannel wireguard-native (encrypted between nodes) + K3s's NetworkPolicy controller;
+    only TCP 5432 is public; SSH and the K3s API only through Cloudflare Tunnel + Access.
+  - Storage: TopoLVM on local NVMe; backups and etcd snapshots to Cloudflare R2.
+  - Postgres ingress: pg-gateway (Rust) DaemonSet on hostPort 5432 on every tenant node; DNS has one
+    A record per node (clients fail over) -> PgBouncer (pooled hostname) or Postgres (-direct hostname).
+  - HTTP ingress: one Cloudflare Tunnel per cell; WAF, DDoS, Turnstile, Access; Next.js 16 static exports
+    (public site, dashboards) on Workers Static Assets.
+  - Admin/management layer: Supabase Free (ap-south-1) through the IPv4 Supavisor pooler, then Pro at ~30
+    tenants = control-plane database + Supabase Auth. No customer data in Supabase.
+  - Secrets: SOPS + age in git, decrypted by Flux; K3s secrets encryption at rest. Images in ghcr.io.
+  - MCP: remote MCP server (Go SDK, spec 2026-07-28) + our own OAuth 2.1 server mcp-auth (CIMD, RFC 8707).
+  - Languages: Rust for pg-gateway only; Go for control plane, operator, agent, MCP, CLI; TypeScript
+    (Next.js) web; every backend component ships as a Docker-built multi-arch image.
+  - Scaling: nodes added only when revenue covers them; cells of <= 50 nodes / <= 1,500 tenants.
+  - Unchanged from the PDF: tenant model, invariants, MCP permission model. Acceptance gates keep the PDF's
+    list and add Scale, Node loss, Cost and Billing gates and concrete Static-stability timings (plan/04 §8).
+=====================================================================================================
+
+--- Page 1 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  1
+PRODUCTION POSTGRESQL DBaaS
+Blueprint 3
+A cost-first, tenant-isolated managed PostgreSQL platform with Supabase-style 
+MCP, Kubernetes (K3s) resource controls, and provider-neutral scaling. [Rev 4.0: K3s on provider-neutral VMs]
+Architecture status
+Implementation-ready reference architecture. Production claims are tier-specific and require the release 
+gates in this document to pass in the actual deployment.
+Property Decision
+Primary database engine PostgreSQL 18 as the current major-version baseline; pin a 
+tested minor release.
+Tenant boundary One PostgreSQL instance and one logical database per 
+customer/tenant in the default DBaaS model.
+Shared economics Multiple tenant PostgreSQL workloads run on shared 
+VM/node infrastructure.
+Container orchestration [Rev 4.0] K3s cluster (cell) shared across tenants; namespaces, NetworkPolicies, 
+quotas and Pod Security enforce workload isolation.
+Per-tenant compute
+CPU and memory requests/limits are applied to the tenant 
+PostgreSQL Pod, not to PostgreSQL databases inside one 
+process.
+Scaling Vertical and horizontal; hot tenants can move to dedicated 
+VMs/clusters.
+Control plane [Rev 4.0] Cloudflare Tunnel/edge + Go control API in the K3s cell + Supabase admin DB and Supabase Auth + River 
+transactional outbox + asynchronous reconciler.
+Backup CloudNativePG Barman Cloud Plugin + Cloudflare R2 [Rev 3.2: R2 adopted, uncompressed base backups]; R2 was 
+a candidate target gated by restore testing.
+AI/MCP
+OAuth-authenticated MCP with project/tenant scoping, 
+feature groups and server-enforced read/write/privileged 
+permissions.
+Prepared: September 21, 2026
+This document supersedes the earlier two architecture drafts by consolidating their valid components and adding the 
+clarified tenant resource and MCP model.
+
+--- Page 2 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  2
+Table of Contents
+0. Executive architecture
+1. Product contract and terminology
+2. Reference architecture
+3. Tenant model
+4. Shared VM and K3s resource model
+5. PostgreSQL and CloudNativePG data plane
+6. Networking and stable database endpoints
+7. Control plane
+8. Reconciliation and job execution
+9. Database provisioning lifecycle
+10. Vertical and horizontal scaling
+11. Dedicated infrastructure
+12. High availability
+13. Backup, PITR and restore
+14. Tenant migration
+15. Multi-provider and disaster recovery
+16. MCP platform architecture
+17. MCP permissions and agent execution
+18. AI database safety
+19. Security architecture
+20. Secrets and credential lifecycle
+21. Observability, SLOs and incident response
+22. Public API, CLI and SDK
+23. Customer and admin dashboards
+24. Billing, quotas and capacity admission
+25. Provider abstraction and infrastructure automation
+26. PostgreSQL lifecycle and extensions
+27. Storage architecture
+28. Future MySQL compatibility
+29. Cost-first rollout plan
+30. Production acceptance gates
+31. Failure modes and recovery
+32. Operations and runbooks
+33. Implementation order
+34. Final architecture checklist
+Appendix A. Reference resource profiles
+Appendix B. Verified technology constraints
+Appendix C. Research references
+
+--- Page 3 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  3
+0. Executive architecture
+The platform is a managed PostgreSQL service where each customer receives an independently managed 
+PostgreSQL instance and database, while multiple tenant workloads can share the same physical VM/node. [Rev 4.0] A K3s cluster 
+is the shared scheduler and control layer; the PostgreSQL Pod is the tenant resource boundary. The control 
+plane remains outside the customer data plane.
+Figure 1. End-to-end control-plane and data-plane architecture.
+Core invariant
+Never attempt to distribute ordinary writes for one PostgreSQL database by round-robin routing across 
+providers. Horizontal write scale is achieved by assigning different tenants to different clusters and migrating 
+tenants between them.
+Layer Responsibility Hard boundary
+Experience Dashboard, CLI, SDKs, MCP client 
+integration
+Never grants raw Kubernetes 
+credentials
+Edge DNS, TLS, WAF, DDoS, public HTTP 
+ingress No direct exposure of Kubernetes API
+Control plane AuthN/AuthZ, billing, desired state, 
+operations, placement
+Never stores customer application 
+data
+Reconciliation Provision, scale, migrate, backup, 
+restore, upgrade Idempotent, auditable, retry-safe
+Data plane K3s (flannel wireguard-native, NetworkPolicy, TopoLVM), CloudNativePG, PostgreSQL, 
+poolers, gateways
+Tenant workloads isolated by 
+namespace, network and credentials
+Recovery plane Base backups, WAL, logical tenant 
+exports, DR targets
+Recovery tested before contractual 
+promises
+1. Product contract and terminology
+1.1 Tenant, customer and user
+A customer organization is a tenant of the DBaaS. An organization may contain multiple human users and 
+service identities. Each tenant owns one PostgreSQL database resource and one PostgreSQL instance workload 
+in the default architecture.
+1.2 Database unit
+The service unit presented to the customer is a PostgreSQL database with a stable logical hostname, 
+credentials, storage entitlement, CPU entitlement, memory entitlement, backup policy and MCP permission 
+policy.
+1.3 Production promises
+ Free/shared tiers are best-effort unless an HA contract is explicitly sold and tested.
+ CPU and memory limits are enforced at the Pod/container level. PostgreSQL databases inside one process 
+do not receive independent CPU/RAM cgroup limits.
+ A dedicated VM or cluster is an isolation tier; a dedicated single VM is not HA.
+
+--- Page 4 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  4
+ RPO/RTO is measured per tier after failure and restore tests.
+ Existing TCP sessions do not follow a tenant during migration; clients must reconnect and retry according to 
+the documented contract.
+2. Reference architecture
+2.1 Logical topology
+CUSTOMERS
+  |
+  +-- Dashboard / CLI / SDK
+  +-- MCP client
+  |
+Cloudflare (DNS, WAF, Turnstile, Access, Tunnel, Workers Static Assets)   [Rev 3.2]
+  |                                   Postgres path: Cloudflare DNS (DNS-only, A record per node) -> pg-gateway :5432 (Rust) [Rev 4.0]
+Cloudflare Tunnel -> cloudflared in the cell (no public HTTP origin)
+  |
+Stateless Control API (Go, on the cell's system node pool)
+  |
+Supabase admin DB (ap-south-1) + Supabase Auth <-> River jobs (transactional outbox + queue)
+  |
+Private Go workers (placement, DNS, provider adapter, billing)
+  |
+Per-cluster agent (pull, mTLS) -> TenantDatabase operator
+  |
+Provider Adapters
+  +--> K3s cells on provider-neutral VMs (cell c1 first, one provider + region per cell) [Rev 4.0]
+  +--> AWS / GCP / Azure clusters later (same adapter contract)
+  |
+Shared / Isolated / Dedicated PostgreSQL workloads
+  |
+Gateway -> PgBouncer -> PostgreSQL
+  |
+Base backup + WAL -> Cloudflare R2 (bucket per cell, prefix per tenant)   [Rev 3.2]
+2.2 Control-plane/data-plane separation
+The control plane owns catalog state and desired infrastructure state. It never becomes a proxy for customer 
+application data. The data plane owns PostgreSQL execution, storage and customer database contents. This 
+separation limits blast radius and keeps the control database replaceable.
+3. Tenant model
+3.1 Default tenant unit
+Tenant resource Default behavior
+PostgreSQL instance One CloudNativePG Cluster with one PostgreSQL instance 
+for the shared-cost tier
+Database One customer-owned PostgreSQL database
+Namespace One Kubernetes namespace per tenant
+Runtime roles Separate app/read/write/AI/backup/operator roles as 
+required
+Secrets Tenant credentials and certificates stored as Kubernetes 
+Secrets or an external secret system
+Storage Independent PVC for the tenant PostgreSQL instance
+Resource policy CPU/memory requests+limits and a quota envelope
+
+--- Page 5 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  5
+Network policy Default deny with only explicitly required connectivity
+Backup policy Per-tenant retention metadata; physical backup is instance-
+scoped
+3.2 Why one PostgreSQL instance per tenant
+PostgreSQL resource behavior is primarily instance-level. CloudNativePG explicitly recommends a single 
+application-owned database per PostgreSQL cluster because resource management and physical PITR are 
+simpler at the instance level. This makes the tenant instance the natural unit for Kubernetes CPU/RAM policy 
+and recovery boundaries.
+Boundary to remember
+One database per tenant is a logical data boundary. One PostgreSQL Pod/instance per tenant is the compute 
+and operational boundary. These are intentionally paired in this design.
+4. Shared VM and K3s resource model
+Figure 2. The K3s cluster is shared; PostgreSQL Pods carry tenant-specific compute policies.
+4.1 What K3s is doing [Rev 4.0]
+K3s runs the Kubernetes control plane on three of our VMs (embedded etcd, 3 servers); growth nodes
+join as agents. We run what a managed service would: etcd snapshots to R2, upgrades with
+system-upgrade-controller, evacuation for node retirement, and a capacity controller with a budget
+guard [Rev 4.0]. One K3s cluster schedules and manages many tenant Pods on the 
+same VM or node pool. It is not installed inside each tenant allocation. It is the shared orchestration layer.
+4.2 Tenant resource enforcement
+Policy Example Enforced by
+CPU request 500m Kubernetes scheduler placement
+CPU limit 500m Container cgroup CPU limit
+Memory request 1Gi Kubernetes scheduler placement
+Memory limit 1Gi Container cgroup memory limit
+Namespace quota Total tenant CPU/RAM envelope ResourceQuota
+
+--- Page 6 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  6
+Allowed bounds Minimum/maximum/default requests LimitRange
+Pod security Restricted profile where compatible Pod Security Admission
+Network isolation Default deny + explicit allow rules NetworkPolicy
+4.3 Capacity calculation
+Placement is based on requested resources plus measured PostgreSQL overhead and node reserve, not simply 
+on the sum of plan labels. Reserve capacity for kubelet/K3s system reservations (use node Allocatable), the OS, CloudNativePG, poolers, monitoring, filesystem 
+cache, WAL bursts, backup jobs and recovery operations.
+AVAILABLE_CAPACITY = NODE_CAPACITY - SYSTEM_RESERVE - PLATFORM_RESERVE - SAFETY_HEADROOM
+ADMISSION = requested_cpu <= available_cpu AND requested_memory <= available_memory
+PLACEMENT = eligible cluster with sufficient capacity + policy compatibility
+4.4 Shared-node limitation
+CPU and memory limits do not make the shared VM a separate physical failure domain per tenant. Tenants still 
+share the host kernel, disk device, network interface and VM failure domain. Storage IOPS isolation must be 
+designed separately if it becomes a contractual requirement.
+5. PostgreSQL and CloudNativePG data plane
+5.1 PostgreSQL baseline
+PostgreSQL 18 is the current stable major version as of this blueprint. Pin a tested minor release and maintain it 
+with the PostgreSQL project's supported minor-release cadence.
+5.2 CloudNativePG responsibilities
+ PostgreSQL cluster lifecycle and reconciliation.
+ Primary/standby lifecycle for HA tiers.
+ Database and role management through declarative Kubernetes resources.
+ Pooler integration.
+ Backup/recovery integration.
+ Health and readiness reporting.
+ Controlled PostgreSQL upgrades.
+5.3 Tenant deployment object
+Tenant
+  -> Namespace
+  -> CNPG Cluster
+       -> PostgreSQL Pod
+       -> PVC
+       -> RW/R/RO Services
+       -> Optional Pooler
+  -> Database
+  -> Roles / Secrets
+  -> ResourceQuota / LimitRange
+  -> NetworkPolicies
+  -> Backup policy
+
+--- Page 7 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  7
+5.4 PostgreSQL configuration policy
+Customers should not directly mutate operator-managed PostgreSQL configuration using ALTER SYSTEM. The 
+control plane applies approved parameters through CloudNativePG manifests and validates them against the 
+tenant plan and engine compatibility.
+6. Networking and stable database endpoints
+6.1 Customer endpoint
+postgresql://user:password@tenant-123.db.example.com:5432/database
+The hostname is logical. It resolves through a platform-owned gateway/routing layer that maps the tenant to its 
+active cluster and pooler. The mapping is versioned and health-checked.
+6.2 Route registry
+Field Purpose
+tenant_id Immutable tenant identity
+hostname Stable customer hostname
+cluster_id Current placement
+provider Cloud provider
+region Deployment region
+pooler_endpoint Current RW/R/RO backend
+route_generation Monotonic route version
+state active / draining / migrating
+health_checked_at Last verified health
+6.3 Migration networking rule
+Route changes affect new connections. Existing PostgreSQL TCP sessions remain on the old path. The migration 
+contract therefore includes connection draining, reconnect guidance and transaction retry behavior.
+6.4 Cloudflare role
+Cloudflare is used for HTTP control-plane traffic, DNS, TLS, WAF, DDoS protection, Access/Tunnel for 
+administration. [Rev 3.2] All HTTP ingress uses Cloudflare Tunnel; staff tools sit behind Cloudflare Access;
+Turnstile protects sign-up/sign-in; dashboards are Workers Static Assets; backups go to R2. Admin access to
+the private K3s API and SSH use Cloudflare Tunnel + Access [Rev 4.0]. Postgres reaches tenants via DNS -> pg-gateway on the nodes. Cloudflare is not used as the raw 
+arbitrary TCP PostgreSQL data path.
+7. Control plane
+7.1 Components
+Component Purpose
+control-api (Go in the K3s cell) [Rev 3.1: was Cloudflare Workers/API] Public stateless API, authentication integration, rate 
+limiting, request validation
+Supabase admin DB (Free, then Pro; ap-south-1) [Rev 3.3: was Neon] Authoritative control metadata only (no customer data)
+Transactional outbox Durably records events in the same transaction as desired-
+state changes
+Queue/workflow Delivers asynchronous work and absorbs bursts
+
+--- Page 8 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  8
+Go reconciler Converts desired state into actual infrastructure state
+Provider adapter Normalizes provider-specific VM/network/storage APIs
+Gateway/router Maintains tenant database endpoint routing
+Prometheus/OTel Operational telemetry
+7.2 Control database boundaries
+ Stores organizations, users, memberships, tenants, databases, plans, quotas, clusters, nodes, routes, 
+credentials metadata, operations, migrations, backups, usage aggregates, audit events and MCP 
+permissions.
+ Does not store customer application data, WAL, customer backup objects or high-frequency time series.
+ Must have its own backup and restore procedure independent of customer data.
+8. Reconciliation and job execution
+8.1 Desired-state model
+The API writes desired state. The controller observes actual state and reconciles toward the desired state. Long-
+running infrastructure work is never performed synchronously inside the HTTP request handler.
+REQUESTED -> AUTHORIZED -> QUEUED -> DISCOVERED -> CREATED/UPDATED -> POLLED -> VERIFIED -> 
+SUCCEEDED
+                         |
+                         +-> RETRYABLE_FAILURE -> BACKOFF -> QUEUED
+                         +-> PERMANENT_FAILURE -> FAILED
+                         +-> AMBIGUOUS -> QUERY_PROVIDER_STATE -> RECONCILE
+8.2 Job requirements
+ Idempotency key and operation ID.
+ Lease ownership and timeout.
+ Retries with exponential backoff.
+ Provider request ID when available.
+ Progress events and structured logs.
+ Cancellation only where the operation is safely cancellable.
+ Explicit destructive states and manual intervention path.
+ Complete audit history.
+8.3 Initial queue choice
+[Rev 3.1] Use River (Go job queue on the control database): jobs are inserted in the same transaction as the
+desired-state change, which is the transactional outbox; River provides retries, uniqueness and leases. Add a 
+more complex message system only when measured workload and operational requirements justify it.
+9. Database provisioning lifecycle
+1. Client submits a create request with an idempotency key.
+2. API authenticates and authorizes the organization, plan and requested resource profile.
+3. Control-plane transaction creates the tenant, desired placement, operation and outbox event.
+
+--- Page 9 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  9
+4. API returns 202 Accepted with operation_id.
+5. Queue consumer claims the event.
+6. Reconciler selects an eligible cell/node [Rev 4.0] with enough capacity.
+7. Tenant namespace, quotas, policies and PostgreSQL resources are created.
+8. CloudNativePG creates the PostgreSQL instance, database and managed roles.
+9. Pooler and route resources are created.
+10. Backup configuration and monitoring are attached.
+11. Controller validates TLS, authentication, role permissions, database readiness and write/read health.
+12. Gateway receives a new route generation.
+13. Customer-style connection test is executed.
+14. Operation becomes succeeded and connection metadata is exposed through the API.
+9.1 Deletion
+Deletion is staged. The tenant enters deletion_pending, a verified recovery point is created or confirmed, a 
+grace period is applied, a second authorization is required for irreversible purge, and the audit record is 
+retained.
+10. Vertical and horizontal scaling
+Figure 3. Scaling path from shared capacity to dedicated HA.
+10.1 Vertical scaling
+Increase CPU, RAM and storage for a tenant PostgreSQL Pod when the node has sufficient capacity. The 
+controller applies a new resource profile, waits for convergence, verifies PostgreSQL health and then records 
+the observed state.
+
+--- Page 10 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  10
+10.2 Horizontal scaling
+When the node/cluster is full, add another VM or cluster. New tenants are assigned to the new capacity. Existing 
+tenants move through the migration workflow; the endpoint stays logically stable.
+10.3 Capacity triggers
+ CPU saturation sustained above policy threshold
+ Memory pressure or cache loss
+ Storage/IOPS saturation
+ Connection-pool wait
+ WAL archive pressure
+ P95/P99 latency breach
+ Tenant growth exceeding planned envelope
+ Provider capacity or budget constraint
+10.4 Do not use
+ Round-robin writable PostgreSQL across independent providers
+ A second VM as a magical extension of the same writable PostgreSQL instance
+ One Kubernetes cluster stretched across regions/providers over normal public WAN links [Rev 3.1]
+ User-count alone as a capacity metric
+11. Dedicated infrastructure
+Yes. A tenant can be promoted to a dedicated node/VM or a dedicated cell [Rev 4.0] without changing its logical database 
+identity.
+11.1 Dedicated promotion
+Shared Tenant
+   -> destination capacity reservation
+   -> destination PostgreSQL instance
+   -> data migration / logical replication
+   -> validation
+   -> route generation update
+   -> drain old connections
+   -> verify customer connection
+   -> retain rollback source for the defined window
+11.2 Why dedicate
+ Independent CPU/RAM capacity
+ Lower noisy-neighbor risk
+ Independent PostgreSQL version/extensions
+ Independent maintenance window
+ Independent backup/PITR policy
+ Compliance or trust boundary
+ High sustained workload
+
+--- Page 11 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  11
+11.3 Dedicated does not automatically mean HA
+A dedicated single VM is isolated but still has a single failure domain. HA requires replication, 
+fencing/promotion authority, redundant gateway capacity, independent backups and tested failover.
+12. High availability
+Figure 4. Paid HA and multi-provider recovery topology.
+12.1 Paid HA tier
+ At least two PostgreSQL data nodes for basic failover; three for stronger redundancy and repair capacity.
+ Separate failure domains/topology spread where available.
+ Two gateway replicas or an equivalent redundant front door.
+ Fencing / promotion authority to prevent split brain.
+ Independent backup target.
+ Lag monitoring and automated health evaluation.
+12.2 Kubernetes control-plane HA (K3s) [Rev 4.0]
+Each cell runs an HA K3s topology: three server nodes for embedded-etcd quorum (cp-1, node-1, node-2) on one
+private network, with etcd snapshots every 6 h to R2. Availability also comes from static stability (running
+databases don't depend on the Kubernetes API or the control plane) and a second cell later. HA PostgreSQL
+places instances on different nodes. The original K3s guidance still applies: use an HA K3s topology with 
+three or more server nodes for embedded-etcd quorum. The cheapest single-node deployment is explicitly 
+best-effort and not an HA service.
+12.3 HA promise
+Publish measured RPO/RTO only after destructive tests: kill the primary, isolate the primary, partition the 
+network, lose a replica and validate that exactly one writable primary exists.
+13. Backup, PITR and restore
+13.1 Physical backups
+ Continuous WAL archiving
+ Scheduled physical base backups
+ Per-cluster backup prefixes
+ Least-privilege backup credentials
+ Archive freshness monitoring
+
+--- Page 12 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  12
+ Restore duration tracking
+13.2 R2 as backup target [Rev 3.2: adopted]
+Backups and WAL go to Cloudflare R2 (https://<account_id>.r2.cloudflarestorage.com), one bucket per cell and
+one prefix per tenant, with AWS_REQUEST_CHECKSUM_CALCULATION / AWS_RESPONSE_CHECKSUM_VALIDATION = when_required
+and AWS_DEFAULT_REGION=auto on the Barman plugin sidecar. WAL is compressed; base backups are uncompressed
+because R2 rejects the uneven multipart parts compressed barman streams produce. One 8-day bucket lock (longer than
+the weekly base interval) protects recent backups [Rev 3.3]. India-only customers can get an India S3-compatible target per tenant [Rev 4.0].
+Original text (the release-gate rule still applies):
+Cloudflare R2 is economically attractive and S3-compatible, but compatibility is not a substitute for testing. 
+Treat the exact CloudNativePG/Barman Cloud Plugin/R2 combination as a release gate. Until it passes, maintain 
+a verified canonical recovery target for higher-value tiers.
+13.3 PITR
+PITR is cluster/instance scoped. For a tenant restore request, restore the physical recovery target into a 
+temporary recovery environment, validate the requested recovery point, extract or restore the tenant database 
+into an isolated destination, verify roles/ACLs, then publish the route only after approval.
+13.4 Logical tenant exports
+Maintain periodic logical exports for portability, deletion recovery and tenant-level recovery workflows. 
+Maintain a separate managed manifest for cluster-wide globals that are not fully represented by a normal 
+pg_dump.
+14. Tenant migration
+14.1 Small tenant migration
+1. Create destination PostgreSQL instance.
+2. Apply compatible PostgreSQL version and extension set.
+3. Create roles and schema.
+4. Perform dump/restore or another supported migration method.
+5. Validate rows, sequences, extensions, permissions and application connection.
+6. Quiesce or otherwise control writes for final cutover.
+7. Publish new route generation.
+8. Drain old connections.
+9. Verify customer connection and application writes.
+10. Retain source until rollback window expires.
+14.2 Hot tenant migration
+For larger or hot tenants use logical replication where its semantics match the workload. Validate DDL, 
+sequences, large objects, concurrent writes, replication lag, cutover and rollback explicitly because logical 
+replication is not a complete physical clone mechanism.
+14.3 Migration truth
+Logical replication is a migration tool, not a zero-downtime guarantee. Existing TCP sessions do not migrate, 
+and client reconnect behavior remains part of the product contract.
+
+--- Page 13 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  13
+15. Multi-provider and disaster recovery
+Providers are independent capacity domains. Register each provider/region as a separate cluster or VM pool. 
+Never stretch one Kubernetes cluster across regions or providers over the ordinary public internet. [Rev 3.1]
+Each K3s cell (one provider + region) is an independent capacity and failure domain [Rev 4.0].
+15.1 Provider adapter contract
+Capability Required metadata
+Compute instance type, CPU, RAM, architecture, availability
+Network private networking, routing, firewall/security rules
+Storage disk type, capacity, IOPS characteristics, encryption
+Cluster Kubernetes (K3s, or a managed Kubernetes for future cells) lifecycle and supported versions [Rev 4.0]
+Database PostgreSQL image, extensions, CloudNativePG support
+Backup object storage target and connectivity
+Cost hourly cost, quotas, capacity constraints
+Health provider and cluster health signals
+15.2 DR modes
+ Asynchronous replica for provider recovery
+ WAL/PITR rebuild target
+ Scheduled rebuild capacity
+ Cross-provider tenant migration target
+15.3 Promotion rule
+Promotion is controlled: declare provider failure, fence or revoke the old writer, verify target recovery position 
+and health, record expected RPO, promote exactly one target, switch logical routing, verify application writes, 
+then rebuild the old site before rejoining it.
+16. MCP platform architecture
+Figure 5. MCP request path with server-enforced permissions.
+16.1 Supabase-style interaction model
+Use the useful parts of Supabase MCP: remote MCP over HTTP, project/database scoping, OAuth-based 
+authentication, configurable feature groups, explicit read-only mode for restricted workflows, and tool-level 
+authorization. For this platform, extend that model so end users can deliberately grant read, write or combined 
+access to an AI agent.
+16.2 Two MCP use cases
+Mode Purpose
+Developer MCP An owner/developer connects an AI coding agent to a 
+
+--- Page 14 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  14
+selected tenant database for development and operations.
+Customer-facing MCP
+A customer connects their own agent to their own 
+database. Authentication and every tool call are evaluated 
+against that customer identity, tenant, database and 
+permission policy.
+The customer-facing path must never inherit the platform operator's unrestricted credentials. Supabase itself 
+distinguishes its developer-oriented MCP from customer-facing MCP and recommends authenticating 
+customer-facing MCP so tools execute in the user context.
+17. MCP permissions and agent execution
+17.1 Permission model
+Capability Example operations Typical risk
+Data read SELECT, schema inspection, explain, 
+metrics Low/medium
+Data write INSERT, UPDATE, DELETE Medium/high
+Schema write Migrations, CREATE/ALTER High
+Backup Create backup, verify recovery point High operational
+Restore Restore database/recovery point High/destructive
+Scale Change CPU/RAM/storage High operational
+Credential management Rotate credentials Security-sensitive
+Delete Destroy tenant resources Destructive
+17.2 Customer grant modes
+Mode Allowed
+Read-only Data read + schema/metadata read + health/metrics; no 
+write operations
+Write-only
+Allowed writes; no arbitrary customer-data reads. Minimal 
+schema metadata may be exposed as required for 
+execution.
+Read + write Data read/write plus permitted schema operations
+Custom Explicit capability list by tool group
+17.3 Agent execution loop
+1. User sends natural-language instruction.
+2. Agent determines which MCP tool is needed.
+3. MCP gateway validates OAuth token, issuer, audience, tenant and scope.
+4. Permission engine checks the exact operation and resource.
+5. Risk policy determines whether confirmation or elevated approval is required.
+6. Tool executor performs the operation using a constrained role/connection.
+7. Result is validated and normalized.
+8. Operation and audit event are recorded.
+
+--- Page 15 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  15
+9. Agent receives result and continues only within the remaining grant.
+Agent action contract
+The agent is expected to perform real database work, not merely explain SQL. Examples include creating 
+tables, applying migrations, inserting or updating records, diagnosing performance, creating backups, 
+restoring from a recovery point, or changing the tenant resource profile - but every action is executed 
+through the same authenticated, permission-checked and audited path.
+17.4 Interactive approvals
+Destructive and privileged operations require explicit confirmation by default in interactive sessions. An 
+approval is bound to the operation hash, tenant, database, actor, scope and expiry; changing any of those 
+invalidates the approval.
+18. AI database safety
+18.1 SQL execution policy
+ Do not expose an unrestricted superuser query tool to an AI agent.
+ Separate read and write execution roles.
+ Apply statement timeouts and lock timeouts.
+ Bound result rows/bytes and execution time.
+ Reject multi-statement execution unless a dedicated migration tool handles it.
+ Reject unsafe functions, COPY and server-program/file access from general AI SQL tools.
+ Use a SQL parser as one defense layer, never as the only security boundary.
+ Treat database comments, row values, schema text, logs and query results as untrusted input because they 
+may contain prompt-injection instructions.
+18.2 Write operation model
+inspect -> plan -> permission check -> risk classify -> optional backup
+-> explicit approval (when required) -> execute -> verify -> audit -> report
+18.3 Tool groups
+ database: list/get/schema/query_read/query_write/migrate
+ operations: create/get/cancel
+ backup: create/list/restore
+ scaling: cpu/memory/storage
+ credentials: create/rotate/revoke
+ admin: tenant/cluster/provider actions - platform staff only
+19. Security architecture
+Control Requirement
+Identity OAuth/OIDC-compatible authentication for web/MCP; 
+service identities for automation
+Authorization Organization -> tenant -> database -> operation evaluation
+Network Private PostgreSQL networking; default-deny 
+NetworkPolicies
+
+--- Page 16 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  16
+TLS Verify-full for PostgreSQL client connections where 
+supported
+Kubernetes RBAC No wildcard permissions; controller service accounts 
+scoped to required namespaces/resources
+Pod security Restricted Pod Security Standard where compatible
+Secrets Encrypted at rest, rotation workflow, no passwords in logs
+Tenant isolation Namespace + Pod + PVC + database/role + network 
+separation
+Backup isolation Distinct object prefixes/credentials per cluster/tenant policy
+Audit Immutable or off-host export of sensitive operations
+Break-glass Explicit approval, expiry and post-incident review
+19.1 Tenant network policy
+Default deny ingress and egress at the namespace level, then allow only the DNS, control, backup, monitoring 
+and customer-facing paths that are explicitly required. Do not use broad namespace selectors that accidentally 
+open cross-tenant traffic.
+20. Secrets and credential lifecycle
+1. Generate credentials through the control plane/controller.
+2. Store only the minimum necessary secret material.
+3. Expose credentials only through authorized customer channels.
+4. Create a new credential before revoking the old credential during rotation.
+5. Update pooler/auth configuration and validate the new credential.
+6. Switch the active credential.
+7. Revoke the old credential after the grace period.
+8. Record the rotation event without logging the secret.
+For larger deployments, evaluate a dedicated secrets engine such as OpenBao/Vault for dynamic or short-lived 
+credentials. Do not introduce it before the operational need justifies the added complexity.
+21. Observability, SLOs and incident response
+21.1 Required metrics
+ API rate/latency/error
+ MCP authentication/authorization failures
+ Queue depth, oldest age, retries and DLQ
+ Controller reconciliation errors
+ Provider API 4xx/5xx and throttling
+ Route drift and health-check age
+ PostgreSQL CPU/memory/storage/IOPS
+ Connections and pool wait
+ Locks/deadlocks
+ WAL generation and archive age
+
+--- Page 17 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  17
+ Replication lag
+ Backup and restore duration
+ Oldest recoverable timestamp
+ Tenant storage/WAL/egress
+ Monthly spend and budget threshold
+21.2 Alerts
+Severity Examples
+Immediate
+No primary, split-brain suspicion, WAL archive failure, 
+restore failure, route mismatch, certificate expiry, secret 
+rotation failure
+High
+Tenant quota breach, storage/WAL threshold, connection 
+pool exhaustion, repeated reconciliation failure, DLQ 
+growth
+Budget Spend threshold, unexpected provider allocation, capacity 
+reservation risk
+21.3 SLO design
+Publish SLOs only per product tier and after measurements. A free shared tier can be best-effort. Paid isolated 
+and HA tiers need documented availability, support, RPO/RTO and maintenance contracts.
+22. Public API, CLI and SDK
+22.1 Public API
+POST   /v1/databases
+GET    /v1/databases
+GET    /v1/databases/:id
+POST   /v1/databases/:id/scale
+POST   /v1/databases/:id/storage
+POST   /v1/databases/:id/backup
+POST   /v1/databases/:id/restore
+POST   /v1/databases/:id/migrate
+POST   /v1/databases/:id/credentials/rotate
+GET    /v1/databases/:id/metrics
+GET    /v1/databases/:id/logs
+GET    /v1/databases/:id/health
+GET    /v1/operations/:id
+POST   /v1/operations/:id/cancel
+Long-running operations return 202 Accepted with an operation ID and are observable through the operations 
+API.
+
+--- Page 18 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  18
+22.2 CLI
+dbcloud login
+dbcloud db create shop
+dbcloud db list
+dbcloud db info shop
+dbcloud db credentials shop
+dbcloud db scale shop --cpu 1 --memory 2Gi
+dbcloud db storage shop --add 50Gi
+dbcloud db backup shop
+dbcloud db restore shop
+dbcloud db migrate shop --target cluster-07
+22.3 SDKs
+SDKs wrap the public API only. They never embed Kubernetes credentials or direct infrastructure APIs. An SDK 
+operation must preserve idempotency and return the corresponding operation ID for asynchronous actions.
+23. Customer and admin dashboards
+23.1 Customer dashboard
+ Database status and PostgreSQL version
+ Connection strings and credential management
+ CPU/RAM/storage entitlements and current usage
+ Connection/pool health
+ Reads/writes/latency
+ Backup status and recovery points
+ PITR status
+ MCP connections and permissions
+ Scale/restore/migration requests
+ Operation history and audit trail
+23.2 Admin dashboard
+ Organizations and users
+ Tenants and database lifecycle state
+ Provider/region/cluster/node inventory
+ Capacity and placement
+ CPU/RAM/storage allocation
+ Backup freshness and recovery tests
+ Migration operations
+ HA/failover status
+ Queue/reconciliation health
+ MCP permissions and security events
+ Billing/usage/budget
+ Runbooks and incident links
+The admin UI accesses the control API, not customer PostgreSQL directly.
+
+--- Page 19 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  19
+24. Billing, quotas and capacity admission
+24.1 Resource-based pricing
+Price should map to the resources and recovery guarantees actually consumed: CPU, memory, storage, backup 
+retention, optional HA, dedicated placement and support/SLO tier.
+24.2 Admission policy
+1. Validate the tenant workload envelope.
+2. Validate plan limits and trust/compliance requirements.
+3. Check available cluster/node capacity.
+4. Check storage and backup capacity.
+5. Check provider budget and quota.
+6. Place only on an eligible cluster.
+7. Record the placement decision for later rebalancing.
+24.3 Quota enforcement
+Kubernetes ResourceQuota/LimitRange enforce the technical envelope; the control plane owns the commercial 
+entitlement. The controller must reject requested values outside the tenant plan before reaching Kubernetes.
+25. Provider abstraction and infrastructure automation
+25.1 Provider-neutral interface
+ProviderAdapter
+  create_vm()
+  resize_vm()
+  delete_vm()
+  create_network()
+  attach_storage()
+  create_load_balancer()
+  get_capacity()
+  health_check()
+  list_regions()
+  get_cost_estimate()
+  get_request_status()
+25.2 Infrastructure as code
+[Rev 4.0] Provision VMs (Terraform where the provider has a provider; otherwise the same cloud-init by hand),
+a node bootstrap that installs a pinned K3s, and Flux GitOps with SOPS secrets; Cloudflare via Terraform. Pin images and 
+versions. Register every cluster only after conformance tests pass.
+25.3 Architecture when adding AWS
+Existing: K3s cell c1 -> tenant A/B/C
+New:       AWS cluster -> tenant D/E/F
+Control plane sees both as independent capacity domains.
+New tenants can land on AWS immediately; existing tenants move only through migration.
+
+--- Page 20 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  20
+26. PostgreSQL lifecycle and extensions
+26.1 Version policy
+ Pin a supported major version for shared pools.
+ Allow premium/dedicated tenants to choose among the provider-supported majors only where automation 
+supports it.
+ Upgrade by tested rolling or new-cluster procedures.
+ Never allow arbitrary server-level changes that bypass the controller/operator.
+26.2 Extensions
+Maintain an approved extension catalog per PostgreSQL major version and provider image. A tenant is eligible 
+for a cluster only if its required extensions can be installed and recovered there.
+26.3 Connection pooling
+Use PgBouncer/CloudNativePG Pooler for high connection counts. Use transaction pooling for compatible 
+stateless workloads. Use session/direct endpoints for operations requiring session affinity, session GUCs, 
+temporary tables, LISTEN/NOTIFY, or administrative workflows.
+27. Storage architecture
+27.1 Live PostgreSQL storage
+Use provider block/NVMe-backed storage for live database data where possible. PostgreSQL WAL and database 
+files remain on the tenant instance's persistent volume. Object storage is not used as the live PostgreSQL 
+storage layer.
+27.2 Backup object storage
+Backups and WAL archives use S3-compatible object storage: [Rev 3.2] Cloudflare R2 (bucket per cell,
+prefix per tenant, bucket locks). Live data uses TopoLVM LVs on local NVMe [Rev 4.0]; HA plans replicate across nodes
+(Phase 3). Original note: R2 is a low-cost option because it has no egress 
+charges and is S3-compatible, but the exact Barman/R2 restore path must pass conformance tests.
+27.3 Storage expansion
+1. Validate entitlement.
+2. Check cluster/node capacity and storage class.
+3. Expand the PVC according to provider/storage support.
+4. Wait for filesystem and PostgreSQL capacity to converge.
+5. Verify database health and reported capacity.
+6. Record the new entitlement and usage.
+28. Future MySQL compatibility
+Keep the control plane generic while V1 remains PostgreSQL-only. Generic concepts include database, cluster, 
+credential, backup, restore, scale, replica, migration and usage. A future MySQL adapter should not require 
+rebuilding billing, authentication, MCP policy or the customer dashboard.
+
+--- Page 21 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  21
+28.1 MySQL scaling later
+Only evaluate Vitess or another distributed design after measured workloads justify multi-writer or cross-shard 
+capabilities. Ordinary PostgreSQL tenant sharding remains the first horizontal scale mechanism.
+29. Cost-first rollout plan
+29.1 Phase 0 - development
+ Prototype control API and schema
+ Local k3d development cell (pinned K3s v1.36, CNPG, TopoLVM, pg-gateway) + local Supabase stack [Rev 4.0]
+ Local or low-cost PostgreSQL
+ Mock provider adapter
+ Mock MCP authorization
+ Automated migration/restore tests
+29.2 Phase 1 - paid launch on one 3-VM K3s cell [Rev 4.0]
+ One cost-minimum ARM VM when eligibility/capacity permits
+ K3s (embedded etcd, wireguard-native, NetworkPolicy) + CloudNativePG + PgBouncer + pg-gateway (Rust) [Rev 4.0]
+ cp-1 2 vCPU / 4 GB + node-1, node-2 8 vCPU / 24 GB NVMe: platform + ~53 base, ~29 plus or ~15 premium tenants (plan/03 §6) [Rev 4.0]
+ One PostgreSQL Pod/instance per initial tenant
+ Per-tenant namespace, quotas, policies
+ Go control plane in the cell + Supabase Free admin DB + Supabase Auth + mcp-auth + Cloudflare Tunnel; Razorpay billing [Rev 4.0]
+ Transactional outbox + queue/reconciler
+ Backups to verified object storage
+ MCP with explicit permissions
+ Internal users first, then controlled light tenants
+29.3 Phase 2 - growth paid from revenue [Rev 3.3]
+ Supabase Pro, then growth nodes (8 vCPU / 24 GB agents) added only when revenue covers them; capacity controller with a max_nodes guard, K3s
+upgrade automation, per-tenant R2 credentials, scale gate of 1,000 hibernated synthetic tenants (plan/04 §4) [Rev 4.0]
+ Tenant migration automation
+ Dedicated placements
+ Per-cluster backup/metrics
+ Chargeback and budget alerts
+29.4 Phase 3 - paid HA
+ HA plans with replicas on different nodes, when revenue funds them; control plane active-active in two cells from Phase 4 [Rev 4.0]
+ Multiple PostgreSQL instances
+ Fencing/promotion authority
+ Gateway redundancy
+ Failover drills
+ Measured RPO/RTO
+29.5 Phase 4 - multi-provider DR
+ Second cell c2 in another region (same or another provider, AWS/GCP later) with CNPG replica clusters restoring from R2; per-cell
+tunnels behind Cloudflare Load Balancing; break-glass promotion runbook (plan/04 §6) [Rev 4.0: was independent provider cluster]
+ Async replication or WAL/PITR target
+ Promotion/fencing workflow
+
+--- Page 22 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  22
+ Provider outage drills
+29.6 Phase 5 - advanced scale
+ Multi-cluster placement automation
+ Long-term metrics storage
+ Dynamic secrets
+ Dedicated message streaming
+ Multi-region service
+ Future MySQL
+30. Production acceptance gates
+The architecture is not called production-ready for a tier until the corresponding test evidence exists.
+Gate Pass condition
+Tenant isolation No cross-tenant database, secret, PVC or network leakage
+Resource limits CPU/memory limits hold under stress; tenant cannot 
+bypass entitlement
+Capacity Supported envelope established from realistic workload 
+replay
+Provisioning idempotency Duplicate events and crashed controllers converge to one 
+correct resource
+Pooler Connection exhaustion and restarts do not violate 
+PostgreSQL limits
+Backup/PITR Known-point restore produces exact expected rows and 
+reports archive gaps
+R2 compatibility [Rev 3.2] Upload, multipart (uncompressed base backups), restore, PITR, retention under bucket locks and interruption 
+tests pass
+HA Failover/partition tests produce exactly one writer
+Migration Concurrent writes, DDL, sequences, large objects, cutover 
+and rollback validated
+MCP authorization Wrong tenant/scope/token/issuer/audience/replay are 
+rejected
+AI safety Unsafe SQL, unbounded exports and prompt injection 
+attempts are blocked or escalated
+Security RBAC, NetworkPolicies, Pod Security, secrets, TLS and audit 
+controls pass review
+DR Provider failure recovery drill records actual RPO/RTO
+31. Failure modes and recovery
+Failure Expected response
+Controller crash Lease expires; job retries; provider state is queried before 
+retry
+Queue duplicate Idempotency prevents duplicate logical resources
+Provider API timeout Query current state before issuing another mutating 
+request
+VM failure Restore/rebuild from backup unless HA tier provides 
+
+--- Page 23 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  23
+standby
+PostgreSQL primary failure CNPG failover in HA tier; rebuild old primary after fencing
+WAL archive failure Alert before recovery window is compromised; halt risky 
+promises
+Route drift Compare desired vs observed route generation; reconcile
+Tenant overload Throttle/limit according to plan; promote to new capacity
+Host saturation Stop placement on node and scale cluster horizontally
+Secret rotation failure Keep old credential until new credential is verified
+MCP token misuse Reject at auth/policy layer; record security event
+Prompt injection in DB data Treat data as untrusted; never let it override policy or user 
+grants
+Provider-wide outage Fence old writer and promote/rebuild only through DR 
+procedure
+32. Operations and runbooks
+ Provisioning failure
+ Credential rotation failure
+ Tenant overload/promotion
+ PostgreSQL primary failure
+ Storage expansion
+ Backup failure
+ PITR restore
+ Tenant migration rollback
+ Provider outage/DR promotion
+ MCP security incident
+ Certificate expiry
+ Budget or quota exhaustion
+ Cluster upgrade
+ K3s node loss / server replacement / etcd quorum loss (restore from snapshot) [Rev 4.0]
+ Supabase outage (static stability check), Cloudflare outage, pg-gateway overload [Rev 3.2]
+32.1 Runbook structure
+Detection -> Scope -> Freeze risky automation if required -> Preserve evidence
+-> Verify authoritative state -> Execute controlled recovery -> Validate
+-> Restore normal routing -> Record RPO/RTO -> Post-incident review
+33. Implementation order
+1. Build control-plane schema and API contracts first.
+2. Implement tenant resource profiles and placement decisions.
+3. Provision one K3s cell (3 servers, TopoLVM, CNPG) with one PostgreSQL instance per tenant. [Rev 4.0]
+4. Implement namespaces, ResourceQuota, LimitRange, NetworkPolicies and Pod Security.
+5. Add PgBouncer/CloudNativePG Pooler and stable endpoint routing.
+6. Implement transactional outbox, queue and idempotent Go reconciler.
+7. Implement backup/WAL and restore verification before onboarding customer data.
+
+--- Page 24 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  24
+8. Implement MCP OAuth, tenant scope and permission engine.
+9. Implement read/write/custom permission execution and approvals.
+10. Build customer/admin dashboards and CLI.
+11. Run all acceptance gates.
+12. Add a second VM and migration before marketing horizontal capacity.
+13. Add dedicated VM/cluster promotion.
+14. Add HA only with paid contracts and measured RPO/RTO.
+15. Add second provider for DR after restore/failover drills pass.
+34. Final architecture checklist
+Area Final decision
+Tenant boundary 1 PostgreSQL instance + 1 database per customer
+Compute sharing Many tenant Pods on shared VM/node capacity
+Kubernetes Shared K3s cluster per cell, not per-tenant clusters [Rev 4.0]
+CPU/RAM controls Per-tenant Pod requests/limits + namespace quota
+Storage Per-tenant persistent volume; object storage for backups
+Control plane Provider-neutral; customer data remains in data plane
+Write scale Shard tenants across clusters; migrate tenants
+Vertical scale Increase tenant resources or move to larger node
+Dedicated option Move tenant to dedicated VM/cluster
+HA Multi-node PostgreSQL + fencing + redundant gateway + 
+tested recovery
+Multi-provider Independent clusters; DR/shards, not transparent shared 
+writes
+MCP OAuth + tenant/project scoping + feature groups + 
+customer grants
+MCP modes Read-only, write-only, read+write, custom capabilities
+AI writes Server-enforced policy, least privilege, approval for 
+dangerous actions
+Backups Physical + WAL + logical tenant exports; restore-tested 
+target
+Observability Prometheus/OTel + alerts + runbooks
+Release standard No production promise before acceptance gates pass
+Final architecture statement
+The economic model is shared compute; the operational model is per-tenant PostgreSQL instances; the 
+scaling model is vertical + horizontal + dedicated promotion; the safety model is server-enforced 
+authorization and reconciliation; and the recovery model is backup-first with measured HA/DR tiers.
+Appendix A. Reference resource profiles
+Illustrative profiles only. Actual CPU/RAM sizes must be chosen from load tests and provider economics.
+Profile CPU request/limit RAM request/limit Use
+
+--- Page 25 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  25
+Starter 250m / 250m 512Mi / 512Mi Very light development / [Rev 3.3: launch plans are base 100m/500m 512Mi, plus 250m/1000m 1Gi, premium 500m/1000m 2Gi; each tenant also runs a 5m/48Mi PgBouncer pod and a 5m/96Mi backup sidecar (plan/03 §3-§4)]
+low-traffic app
+Small 500m / 500m 1Gi / 1Gi Typical small application
+Medium 1 / 1 2Gi / 2Gi Growing workload
+Large 2 / 2 4Gi / 4Gi High workload; candidate 
+for dedicated placement
+Dedicated Custom Custom Tenant-specific isolated 
+VM/cluster
+Sizing rule
+These are scheduling profiles, not promises of throughput. PostgreSQL workload shape, storage latency, 
+connection count, WAL rate and query patterns determine real capacity.
+Appendix B. Verified technology constraints
+Technology Verified constraint used in this design
+PostgreSQL 18 Current supported major version; current minor 18.6 as of 
+August 13, 2026.
+CloudNativePG 1.30 Stable release; adds DatabaseRole CRD and Lease-based 
+primary election; supports PostgreSQL 18/17/16/15/14.
+K3s [Rev 4.0] v1.36 stable (v1.36.4+k3s1, 2026-09-29); embedded etcd needs 3+ servers on one private
+network in one location; bundled flannel, network-policy controller, CoreDNS, Spegel; CIS benchmark v1.12 guide.
+CNPG 1.30 supports Kubernetes 1.34-1.36.
+VM price bands [Rev 4.0] 8 vCPU / 24-32 GB: value VPS ~Rs 1,200-2,300/month; mainstream VPS/hyperscalers ~Rs 15,000-29,000.
+Only the value-VPS class fits the Rs 9,000 cap with a useful 3-VM cell (plan/03 §2.2).
+TopoLVM [Rev 4.0] thick LVs on local NVMe; local-path-provisioner is not used because it ignores PVC sizes.
+NetworkPolicy on K3s [Rev 4.0] enforced by the embedded kube-router controller; flannel wireguard-native
+encrypts pod traffic between nodes.
+Supabase [Rev 3.3] Free: 500 MB, 5 GB egress, no backups, pauses after 7 days of low activity, direct connection IPv6-only (pooler IPv4); Pro: daily backups (7 days), no pausing.
+Cloudflare DNS [Rev 3.3] Free zones created after 2024-09-01: 200 records; Pro: 3,500 -> one DNS-only wildcard per cell for database names.
+K3s K3s can run as a single server or HA. Embedded-etcd HA 
+uses three or more server nodes for quorum.
+Kubernetes resources
+Requests drive scheduling; limits cap container resource 
+usage. ResourceQuota is namespace-scoped; LimitRange 
+controls per-container defaults/bounds.
+CloudNativePG resources
+CPU/memory requests and limits apply to PostgreSQL 
+Pods. CNPG recommends instance-level resource 
+management.
+Supabase compute
+Each Supabase project has its own dedicated Postgres 
+instance; smaller compute sizes use shared CPU, larger 
+sizes use dedicated vCPUs.
+Supabase MCP
+Hosted MCP supports project scoping, feature groups and 
+read-only mode; database tools include execute_sql and 
+migrations. Customer-facing MCP is a separate 
+authenticated pattern.
+R2
+[Rev 3.2: R2 adopted for backups; multipart parts must be equal-sized except the last] S3-compatible object storage, no egress charges; API 
+compatibility is documented feature-by-feature, so 
+backup/restore integration must be tested.
+Logical replication
+Does not fully replicate database DDL/schema changes, 
+sequence state or large objects; migration must validate 
+these explicitly.
+These constraints were cross-checked against official documentation on September 21, 2026.
+Appendix C. Research references
+Supabase MCP Server - https://supabase.com/docs/guides/ai-tools/mcp
+Supabase customer-facing MCP - https://supabase.com/docs/guides/ai-tools/byo-mcp
+
+--- Page 26 ---
+Production PostgreSQL DBaaS Blueprint - PDF 3
+Production PostgreSQL DBaaS Blueprint  |  September 2026  |  26
+Supabase architecture - https://supabase.com/docs/guides/getting-started/architecture
+Supabase compute and disk - https://supabase.com/docs/guides/platform/compute-and-disk
+Supabase compute usage - https://supabase.com/docs/guides/platform/manage-your-usage/compute
+CloudNativePG resource management - https://cloudnative-pg.io/docs/1.28/resource_management/
+CloudNativePG FAQ - https://cloudnative-pg.io/docs/1.28/faq/
+CloudNativePG 1.30 release notes - https://cloudnative-pg.io/docs/1.30/release_notes/v1.30/
+CloudNativePG installation/upgrades - https://cloudnative-pg.io/docs/1.30/installation_upgrade/
+K3s architecture - https://docs.k3s.io/architecture
+K3s embedded-etcd HA - https://docs.k3s.io/datastore/ha-embedded
+[Rev 4.0 references, checked 2026-09-29]
+K3s requirements - https://docs.k3s.io/installation/requirements
+K3s distributed/multicloud limits - https://docs.k3s.io/networking/distributed-multicloud
+Supabase compute and backups - https://supabase.com/docs/guides/platform/compute-and-disk
+Cloudflare R2 limits - https://developers.cloudflare.com/r2/platform/limits/
+Cloudflare Tunnel on Kubernetes - https://developers.cloudflare.com/tunnel/guides/kubernetes/
+K3s hardening guide - https://docs.k3s.io/security/hardening-guide
+K3s networking and network policy - https://docs.k3s.io/networking/networking-services
+K3s etcd snapshots - https://docs.k3s.io/cli/etcd-snapshot
+Barman Cloud Plugin object stores - https://cloudnative-pg.io/plugin-barman-cloud/docs/object_stores/
+MCP authorization 2026-07-28 - https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization
+MCP authorization spec - https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization
+Kubernetes resource management - https://kubernetes.io/docs/concepts/configuration/manage-resources-
+containers/
+Kubernetes ResourceQuota - https://kubernetes.io/docs/concepts/policy/resource-quotas/
+Kubernetes NetworkPolicy - https://kubernetes.io/docs/concepts/services-networking/network-policies/
+Kubernetes Pod Security Admission - https://kubernetes.io/docs/concepts/security/pod-security-admission/
+Kubernetes multi-tenancy - https://kubernetes.io/docs/concepts/security/multi-tenancy/
+PostgreSQL documentation - https://www.postgresql.org/docs/18/
+PostgreSQL versioning policy - https://www.postgresql.org/support/versioning/
+Cloudflare R2 pricing - https://developers.cloudflare.com/r2/pricing/
+Cloudflare R2 S3 API compatibility - https://developers.cloudflare.com/r2/api/s3/api/
+Cloudflare R2 overview - https://developers.cloudflare.com/r2/how-r2-works/
+MCP authorization reference - 
+https://apps.extensions.modelcontextprotocol.io/api/documents/authorization.html
+Source note: Architecture decisions were synthesized from the two supplied blueprints plus current official 
+documentation. Provider prices, quotas, plan limits and implementation details must be revalidated before 
+launch because they change over time.

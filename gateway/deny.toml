@@ -1,0 +1,25 @@
+# cargo-deny policy for pg-gateway (30-rust.md "Crate hygiene"). Runs in CI; findings fail the build.
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+unmaintained = "all"          # unmaintained crates fail, not only vulnerable ones
+yanked = "deny"
+ignore = []                   # any exception needs an ID, a reason and a review date here
+
+[licenses]
+# Permissive licences only; anything else needs a written review before it is added here.
+allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+confidence-threshold = 0.9
+[licenses.private]
+ignore = true                 # our own unpublished crate
+
+[bans]
+multiple-versions = "warn"    # tracked, but transitive duplicates in tokio/tracing are common
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

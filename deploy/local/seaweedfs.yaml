@@ -1,0 +1,124 @@
+# Local S3 stand-in for Cloudflare R2 (backups and WAL). SeaweedFS (Apache-2.0) is used instead of MinIO,
+# whose community edition stopped publishing releases in 2025-10. Single pod, local only.
+# The S3 identity comes from the Secret `seaweedfs-s3-config`, created by hack/cell.sh with random keys.
+# SEAWEEDFS_IMAGE is replaced with the digest from deploy/vendor/images.lock by hack/cell.sh.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dbcloud-system
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seaweedfs
+  namespace: dbcloud-system
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweedfs-data
+  namespace: dbcloud-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+  namespace: dbcloud-system
+spec:
+  replicas: 1                          # local only; a single pod owns the RWO volume
+  strategy:
+    type: Recreate                     # never two pods on the same data
+  selector:
+    matchLabels: {app: seaweedfs}
+  template:
+    metadata:
+      labels: {app: seaweedfs}
+    spec:
+      serviceAccountName: seaweedfs
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: seaweedfs
+          image: SEAWEEDFS_IMAGE
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - -dir=/data
+            - -s3
+            - -s3.config=/etc/seaweedfs/s3.json
+            - -master.volumeSizeLimitMB=1024   # 1 GiB volumes: small local disk, many small WAL files
+            - -volume.max=0                    # 0 = size the number of volumes from free disk space
+          ports:
+            - {name: s3, containerPort: 8333}
+          readinessProbe:
+            tcpSocket: {port: s3}
+            periodSeconds: 5
+          resources:
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true      # writes go only to /data and /tmp below
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+            - {name: s3-config, mountPath: /etc/seaweedfs, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: seaweedfs-data}
+        - name: tmp
+          emptyDir: {sizeLimit: 256Mi}          # scratch space; bounded so it can't fill the node disk
+        - name: s3-config
+          secret: {secretName: seaweedfs-s3-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs-s3
+  namespace: dbcloud-system
+spec:
+  selector: {app: seaweedfs}
+  ports:
+    - {name: s3, port: 8333, targetPort: s3}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: dbcloud-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# S3 is reachable only from tenant namespaces (label set by the tenant template) on port 8333.
+# The pod needs no egress: master, volume and S3 run in one process and talk over localhost.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-s3-from-tenants
+  namespace: dbcloud-system
+spec:
+  podSelector:
+    matchLabels: {app: seaweedfs}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchExpressions:
+              - {key: dbcloud.io/tenant, operator: Exists}
+      ports:
+        - {protocol: TCP, port: 8333}

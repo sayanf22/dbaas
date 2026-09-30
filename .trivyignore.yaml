@@ -1,0 +1,16 @@
+# Written risk acceptances for Trivy findings (15-security-and-reliability.md §10). Every entry names the
+# owner, the reason and an expiry date; after `expired_at` Trivy reports the finding again and CI fails.
+vulnerabilities:
+  - id: CVE-2026-75804
+    statement: >-
+      Owner: platform owner. Reviewed 2026-09-30. Scope: the pg-gateway image only (libssl3t64
+      3.5.7-1~deb13u2 in the pinned gcr.io/distroless/cc-debian13:nonroot base; the newest digest has no
+      rebuild with deb13u3 yet). pg-gateway does not link libssl (readelf NEEDED: libgcc_s, libm, libc,
+      ld-linux) and will use rustls, so the QUIC flow-control bug is unreachable. Renovate bumps the
+      digest when upstream rebuilds; the entry is deleted then.
+    expired_at: 2026-10-14
+  - id: CVE-2026-84782
+    statement: >-
+      Owner: platform owner. Reviewed 2026-09-30. Same package, scope and reasoning as CVE-2026-75804:
+      DTLS handshake code in a library pg-gateway never loads.
+    expired_at: 2026-10-14

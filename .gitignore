@@ -1,0 +1,25 @@
+# Upstream source clones fetched by `task vendor:sources` (reference only; pinned in deploy/vendor/sources.lock).
+/third_party/
+
+# Local-only state: kubeconfigs, generated credentials, test output.
+/.local/
+*.kubeconfig
+*.age.key
+*.agekey
+.env
+.env.*
+
+# Build output
+/bin/
+/dist/
+target/
+node_modules/
+.next/
+out/
+coverage/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

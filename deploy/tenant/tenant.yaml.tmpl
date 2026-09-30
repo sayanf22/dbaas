@@ -1,0 +1,168 @@
+# One tenant = one namespace with one Postgres instance, one PgBouncer and continuous backup (architecture §6.1).
+# Rendered by hack/tenant.sh from a plan file in ./plans with envsubst (only the ${...} names listed there).
+# Phase 0 stand-in: from Step 0.4 the tenant-operator renders these objects from a TenantDatabase resource.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${TENANT}
+  labels:
+    dbcloud.io/tenant: ${TENANT}
+    dbcloud.io/plan: ${PLAN}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Hard caps the tenant can't exceed even if a template is wrong: pods and requested storage.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+  namespace: ${TENANT}
+spec:
+  hard:
+    pods: "4"                          # Postgres + PgBouncer + a short-lived initdb/restore Job pod + 1 spare
+    persistentvolumeclaims: "1"
+    requests.storage: ${STORAGE}
+    services.nodeports: "0"
+    services.loadbalancers: "0"
+---
+# Default-deny both directions, then the explicit allows below (60-infrastructure: every namespace).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: ${TENANT}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress
+  namespace: ${TENANT}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}                               # PgBouncer -> Postgres inside the tenant
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: cnpg-system}   # operator -> instance manager status port
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: dbcloud-edge}  # pg-gateway (Step 0.5)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress
+  namespace: ${TENANT}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: {}
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:                                                # local S3 (R2 in production is reached on 443 below)
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: dbcloud-system}
+          podSelector:
+            matchLabels: {app: seaweedfs}
+      ports:
+        - {protocol: TCP, port: 8333}
+    - to:                                                # K3s API (instance manager, PgBouncer controller) and R2
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [10.42.0.0/16, 169.254.0.0/16]       # other pods (tenants) and the metadata endpoint
+      ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}
+---
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: backups
+  namespace: ${TENANT}
+spec:
+  retentionPolicy: "7d"                                  # 7-day PITR on every plan (03 §4)
+  configuration:
+    destinationPath: s3://${S3_BUCKET}/${TENANT}/        # one prefix per tenant
+    endpointURL: ${S3_ENDPOINT}
+    s3Credentials:
+      accessKeyId: {name: backup-s3, key: ACCESS_KEY_ID}
+      secretAccessKey: {name: backup-s3, key: ACCESS_SECRET_KEY}
+    wal:
+      compression: zstd
+    # data: no compression; base backups stay uncompressed for R2 multipart (03 §8, spike S4)
+  instanceSidecarConfiguration:
+    retentionPolicyIntervalSeconds: 21600                # 6 h: keeps R2 LIST operations low (03 §8)
+    resources:
+      requests: {cpu: ${SIDECAR_CPU_REQ}, memory: ${SIDECAR_MEM}}
+      limits: {cpu: ${SIDECAR_CPU_LIM}, memory: ${SIDECAR_MEM}}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: db
+  namespace: ${TENANT}
+  labels:
+    dbcloud.io/tenant: ${TENANT}
+spec:
+  instances: 1
+  imageName: ${PG_IMAGE}
+  imagePullPolicy: IfNotPresent
+  enableSuperuserAccess: false                            # customers get the `app` owner role only
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+  postgresql:
+    parameters:
+      max_connections: "${MAX_CONNECTIONS}"
+      shared_buffers: ${SHARED_BUFFERS}
+      archive_timeout: ${ARCHIVE_TIMEOUT}               # RPO bound per plan (03 §4)
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: backups
+  probes:
+    liveness:
+      isolationCheck:
+        enabled: false                                   # single instance: never restart on API loss (01 §9)
+  resources:
+    requests: {cpu: ${PG_CPU_REQ}, memory: ${PG_MEM}}
+    limits: {cpu: ${PG_CPU_LIM}, memory: ${PG_MEM}}
+  storage:
+    size: ${STORAGE}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: pooler
+  namespace: ${TENANT}
+spec:
+  cluster: {name: db}
+  instances: 1
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "${POOL_MAX_CLIENTS}"
+      default_pool_size: "${POOL_SIZE}"
+  template:
+    spec:
+      containers:
+        - name: pgbouncer
+          image: ${PGB_IMAGE}
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {cpu: ${PGB_CPU_REQ}, memory: ${PGB_MEM}}
+            limits: {cpu: ${PGB_CPU_LIM}, memory: ${PGB_MEM}}

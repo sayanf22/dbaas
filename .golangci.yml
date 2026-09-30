@@ -1,0 +1,37 @@
+# golangci-lint v2 configuration (20-go.md). Findings fail CI; suppressions need a rule and a reason.
+version: "2"
+run:
+  timeout: 5m
+  tests: true
+linters:
+  default: standard            # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - gosec                    # security rules referenced in 20-go.md (G112, G114, G115, G402, …)
+    - bodyclose                # response bodies are always closed
+    - contextcheck             # contexts are passed down, not recreated
+    - errorlint                # errors matched with errors.Is/As
+    - noctx                    # outbound HTTP requests carry a context
+    - revive                   # doc comments on exported identifiers
+    - misspell
+    - unparam
+  settings:
+    gosec:
+      config:
+        global:
+          nosec: false
+          show-ignored: true
+          audit: true
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+  exclusions:
+    paths:
+      - third_party            # upstream clones, reference only
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      - third_party

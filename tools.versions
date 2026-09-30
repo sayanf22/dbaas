@@ -1,0 +1,90 @@
+# Pinned developer and CI tool versions (KEY=version), read by hack/install-tools.sh (plan/05 §3).
+# Resolved to the latest stable release on 2026-09-30. Renovate proposes bumps using the
+# `# renovate:` line above each entry (renovate.json customManagers).
+# Fixed by the plan: K3s and kubectl minor 1.36, Flux 2.9.5, CNPG 1.30.1, Node 24 LTS.
+
+# Languages
+# renovate: datasource=golang-version depName=go
+GO=1.27.1
+# renovate: datasource=node-version depName=node
+NODE=24.21.0
+
+# Cluster (same versions locally and on the VMs)
+# renovate: datasource=github-releases depName=k3s-io/k3s
+K3S=v1.36.4+k3s1
+# renovate: datasource=github-releases depName=cloudnative-pg/cloudnative-pg extractVersion=^v(?<version>.+)$
+CNPG=1.30.1
+# renovate: datasource=github-releases depName=cloudnative-pg/plugin-barman-cloud extractVersion=^v(?<version>.+)$
+BARMAN_PLUGIN=0.15.0
+# renovate: datasource=github-releases depName=cert-manager/cert-manager extractVersion=^v(?<version>.+)$
+CERT_MANAGER=1.21.2
+# renovate: datasource=github-releases depName=topolvm/topolvm extractVersion=^topolvm-chart-v(?<version>.+)$
+TOPOLVM_CHART=17.2.0
+# renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+POSTGRES=18.6
+# renovate: datasource=docker depName=ghcr.io/cloudnative-pg/pgbouncer
+PGBOUNCER=1.26.0
+# renovate: datasource=github-releases depName=seaweedfs/seaweedfs
+SEAWEEDFS=4.48
+
+# CLIs
+# renovate: datasource=github-releases depName=fluxcd/flux2 extractVersion=^v(?<version>.+)$
+FLUX=2.9.5
+# renovate: datasource=github-releases depName=cloudnative-pg/cloudnative-pg extractVersion=^v(?<version>.+)$
+CNPG_PLUGIN=1.30.1
+# renovate: datasource=github-releases depName=helm/helm extractVersion=^v(?<version>.+)$
+HELM=4.3.0
+# renovate: datasource=github-releases depName=k3d-io/k3d extractVersion=^v(?<version>.+)$
+K3D=5.9.0
+# renovate: datasource=github-releases depName=getsops/sops extractVersion=^v(?<version>.+)$
+SOPS=3.13.3
+# renovate: datasource=github-releases depName=FiloSottile/age extractVersion=^v(?<version>.+)$
+AGE=1.3.2
+# renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v(?<version>.+)$
+YQ=4.54.1
+# renovate: datasource=github-releases depName=derailed/k9s extractVersion=^v(?<version>.+)$
+K9S=0.51.0
+# renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
+TASK=3.53.1
+# renovate: datasource=github-releases depName=supabase/cli extractVersion=^v(?<version>.+)$
+SUPABASE_CLI=2.118.0
+
+# Linters, scanners, release
+# renovate: datasource=github-releases depName=hadolint/hadolint extractVersion=^v(?<version>.+)$
+HADOLINT=2.15.1
+# renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v(?<version>.+)$
+ACTIONLINT=1.7.12
+# renovate: datasource=github-releases depName=yannh/kubeconform extractVersion=^v(?<version>.+)$
+KUBECONFORM=0.8.0
+# renovate: datasource=pypi depName=zizmor
+ZIZMOR=1.30.1
+# renovate: datasource=github-releases depName=golangci/golangci-lint extractVersion=^v(?<version>.+)$
+GOLANGCI_LINT=2.14.0
+# renovate: datasource=go depName=golang.org/x/vuln extractVersion=^v(?<version>.+)$
+GOVULNCHECK=1.8.0
+# renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+COSIGN=3.1.3
+# renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
+SYFT=1.52.0
+# renovate: datasource=github-releases depName=goreleaser/goreleaser extractVersion=^v(?<version>.+)$
+GORELEASER=2.18.2
+
+# Codegen and tests
+# renovate: datasource=github-releases depName=sqlc-dev/sqlc extractVersion=^v(?<version>.+)$
+SQLC=1.31.1
+# renovate: datasource=github-releases depName=pressly/goose extractVersion=^v(?<version>.+)$
+GOOSE=3.28.0
+# renovate: datasource=github-releases depName=oapi-codegen/oapi-codegen extractVersion=^v(?<version>.+)$
+OAPI_CODEGEN=2.8.0
+# renovate: datasource=github-releases depName=kubernetes-sigs/kubebuilder extractVersion=^v(?<version>.+)$
+KUBEBUILDER=4.16.0
+# renovate: datasource=github-releases depName=kyverno/chainsaw extractVersion=^v(?<version>.+)$
+CHAINSAW=0.2.15
+# renovate: datasource=github-releases depName=vmware-tanzu/sonobuoy extractVersion=^v(?<version>.+)$
+SONOBUOY=0.57.5
+# renovate: datasource=github-releases depName=grafana/k6 extractVersion=^v(?<version>.+)$
+K6=2.3.0
+# renovate: datasource=github-releases depName=EmbarkStudios/cargo-deny
+CARGO_DENY=0.20.2
+# renovate: datasource=github-releases depName=nextest-rs/nextest extractVersion=^cargo-nextest-(?<version>.+)$
+CARGO_NEXTEST=0.9.146

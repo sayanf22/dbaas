@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Brings the pinned open-source components into the repo, so the local cell and the VMs install exactly
+# what was reviewed:
+#   manifests  upstream install manifests -> deploy/vendor/<name>/<version>/ (committed) + SHA256SUMS
+#   images     resolves tags to digests -> deploy/vendor/images.lock (committed), pulls them into Docker
+#   sources    shallow clones of upstream source at the pinned tags -> third_party/ (git-ignored, read-only reference)
+# Requires: curl, sha256sum, docker (buildx), git. Inputs: tools.versions. Safe to re-run: existing files are
+# verified against SHA256SUMS instead of re-trusted; a mismatch stops the script.
+set -Eeuo pipefail
+trap 'echo "vendor: failed at line $LINENO" >&2' ERR
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+vendor="${root}/deploy/vendor"
+gh="https://github.com"
+
+load_versions() {
+  local key value
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    printf -v "$key" '%s' "${value%$'\r'}"
+  done <"${root}/tools.versions"
+}
+
+# fetch <relative-path> <url>: downloads once, records its SHA-256; later runs only verify the recorded hash.
+fetch() {
+  local rel="$1" url="$2" sums="${vendor}/SHA256SUMS"
+  mkdir -p "$vendor" && touch "$sums"
+  if [[ -f "${vendor}/${rel}" ]] && grep -q "  ${rel}\$" "$sums"; then
+    (cd "$vendor" && grep "  ${rel}\$" SHA256SUMS | sha256sum -c --quiet -)
+    echo "ok   ${rel}"; return
+  fi
+  mkdir -p "$(dirname "${vendor}/${rel}")"
+  curl -fsSL -o "${vendor}/${rel}" "$url"
+  (cd "$vendor" && sha256sum "$rel") >>"$sums"
+  echo "new  ${rel}"
+}
+
+manifests() {
+  fetch "cnpg/${CNPG}/cnpg-${CNPG}.yaml" "${gh}/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG}/cnpg-${CNPG}.yaml"
+  fetch "barman-cloud/${BARMAN_PLUGIN}/manifest.yaml" "${gh}/cloudnative-pg/plugin-barman-cloud/releases/download/v${BARMAN_PLUGIN}/manifest.yaml"
+  fetch "cert-manager/${CERT_MANAGER}/cert-manager.yaml" "${gh}/cert-manager/cert-manager/releases/download/v${CERT_MANAGER}/cert-manager.yaml"
+}
+
+# images: every image the local cell runs, pinned by digest (the digest is what gets deployed).
+images() {
+  local lock="${vendor}/images.lock" ref digest refs
+  refs=(
+    "docker.io/rancher/k3s:${K3S//+/-}"
+    "ghcr.io/cloudnative-pg/postgresql:${POSTGRES}-standard-trixie"
+    "ghcr.io/cloudnative-pg/pgbouncer:${PGBOUNCER}"
+    "ghcr.io/cloudnative-pg/cloudnative-pg:${CNPG}"
+    "ghcr.io/cloudnative-pg/plugin-barman-cloud:v${BARMAN_PLUGIN}"
+    "ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v${BARMAN_PLUGIN}"
+    "quay.io/jetstack/cert-manager-controller:v${CERT_MANAGER}"
+    "quay.io/jetstack/cert-manager-webhook:v${CERT_MANAGER}"
+    "quay.io/jetstack/cert-manager-cainjector:v${CERT_MANAGER}"
+    "docker.io/chrislusf/seaweedfs:${SEAWEEDFS}"
+  )
+  : >"$lock"
+  for ref in "${refs[@]}"; do
+    digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)"
+    [[ "$digest" == sha256:* ]] || { echo "vendor: no digest for $ref" >&2; return 1; }
+    printf '%s@%s\n' "$ref" "$digest" >>"$lock"
+    docker pull -q "${ref}@${digest}" >/dev/null
+    echo "ok   ${ref}@${digest:0:19}"
+  done
+}
+
+# clone <dir> <repo> <tag>: shallow, detached checkout of one tag.
+clone() {
+  local dir="${root}/third_party/$1"
+  if [[ -d "$dir/.git" ]]; then echo "ok   third_party/$1"; return; fi
+  git -c advice.detachedHead=false clone -q --depth 1 --branch "$3" "${gh}/$2.git" "$dir"
+  echo "new  third_party/$1 ($3)"
+}
+
+sources() {
+  clone cloudnative-pg        cloudnative-pg/cloudnative-pg        "v${CNPG}"
+  clone plugin-barman-cloud   cloudnative-pg/plugin-barman-cloud   "v${BARMAN_PLUGIN}"
+  clone k3s                   k3s-io/k3s                           "${K3S}"
+  clone seaweedfs             seaweedfs/seaweedfs                  "${SEAWEEDFS}"
+}
+
+main() {
+  load_versions
+  local what steps=("$@")
+  [[ ${#steps[@]} -eq 0 ]] && steps=(manifests images sources)
+  for what in "${steps[@]}"; do
+    case "$what" in
+      manifests|images|sources) "$what" ;;
+      *) echo "usage: vendor.sh [manifests] [images] [sources]" >&2; return 2 ;;
+    esac
+  done
+}
+
+main "$@"

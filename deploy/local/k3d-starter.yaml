@@ -1,0 +1,30 @@
+# Local copy of the starter cell (ADR-025): one K3s server with embedded etcd, like the single starter VM.
+# `--cluster-init` matters: the cell starts on etcd, so two more servers can join later without a rebuild
+# (https://docs.k3s.io/datastore/ha-embedded). The image tag is overridden with the digest from
+# deploy/vendor/images.lock by hack/cell.sh.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: starter
+servers: 1
+agents: 0
+image: rancher/k3s:v1.36.4-k3s1
+options:
+  k3d:
+    wait: true
+    timeout: 180s
+    disableLoadbalancer: true        # no serverlb container: one server, and production has no LB either
+  k3s:
+    extraArgs:
+      - arg: --cluster-init          # embedded etcd, same datastore as production
+        nodeFilters: [server:0]
+      - arg: --disable=traefik       # HTTP enters through Cloudflare Tunnel, not an in-cluster ingress
+        nodeFilters: [server:0]
+      - arg: --disable=servicelb     # Postgres enters through pg-gateway on hostPort 5432
+        nodeFilters: [server:0]
+      - arg: --secrets-encryption    # Secrets encrypted at rest, as on the VMs
+        nodeFilters: [server:0]
+      # local-path storage stays enabled here; production uses TopoLVM (local-path ignores PVC sizes).
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

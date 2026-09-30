@@ -1,0 +1,2 @@
+/* Global stylesheet for the public site: pulls in Tailwind CSS and the shared web/ui theme. */
+@import "@dbcloud/ui/styles.css";

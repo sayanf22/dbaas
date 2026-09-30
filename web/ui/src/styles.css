@@ -1,0 +1,49 @@
+/*
+ * Shared Tailwind CSS v4 entry point and theme for the dbcloud web apps. Each app's globals.css
+ * imports this file once. It defines only the colour tokens the web/ui components use (shadcn/ui
+ * naming) and registers this package's components as a class source; it adds no component CSS.
+ */
+@import "tailwindcss";
+
+/*
+ * Tailwind scans the importing app automatically, but not this package (it sits outside the app
+ * directory), so its components are added explicitly. Path is relative to this file.
+ */
+@source "./components";
+
+/*
+ * Light theme, sRGB-equivalent OKLCH values from shadcn/ui's neutral palette. Contrast on white:
+ * foreground ≈ 18:1, muted-foreground (#737373) ≈ 4.7:1, both above WCAG AA 4.5:1 for body text.
+ */
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --border: oklch(0.922 0 0);
+}
+
+/* Exposes the variables as Tailwind colours (bg-card, text-muted-foreground, border, ...). */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+}
+
+@layer base {
+  /* Tailwind v4 borders default to currentColor; shadcn/ui components expect the border token. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}

@@ -1,0 +1,25 @@
+# pnpm workspace definition and install-time supply-chain settings for the web apps and the shared
+# UI package (.kiro/steering/50-web.md "Dependencies (pnpm)"). pnpm 12 reads its settings from this
+# file; .npmrc is for registry auth only and is deliberately absent.
+packages:
+  - web/site
+  - web/customer
+  - web/admin
+  - web/ui
+
+# Refuse to install or run scripts on a Node version outside root package.json "engines".
+engineStrict: true
+
+# 1440 min = 1 day: brand-new versions are not resolved until they are a day old (50-web.md).
+minimumReleaseAge: 1440
+
+# Transitive dependencies may come only from the registry, never from git or tarball URLs.
+blockExoticSubdeps: true
+
+# Dependency lifecycle scripts are off by default; this is the build allow-list (50-web.md).
+# Every package that ships an install script is listed explicitly. `false` means reviewed and
+# denied, so pnpm (strictDepBuilds, on by default) doesn't fail the install over it.
+allowBuilds:
+  # Denied: its postinstall (napi-postinstall) only downloads a native binding when the matching
+  # optional @unrs/resolver-binding-* package is missing; pnpm installs that package directly.
+  unrs-resolver: false

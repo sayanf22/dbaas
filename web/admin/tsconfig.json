@@ -1,0 +1,10 @@
+// Type-check configuration for the admin dashboard. Compiler options come from
+// ../tsconfig.base.json; this adds the Next.js language-service plugin and generated type files.
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
+  "exclude": ["node_modules", "out"]
+}

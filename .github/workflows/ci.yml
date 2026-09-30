@@ -1,0 +1,222 @@
+# CI for every push and pull request (.kiro/steering/70-ci.md): lint -> test -> build -> scan, per component,
+# with path filters to stay inside GitHub Free's 2,000 minutes. No deploy secrets are available here; images
+# are built but never pushed from this workflow (release-images.yml does that on main).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true          # superseded runs on the same branch stop and free minutes
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read           # paths-filter lists PR files through the API
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+      infra: ${{ steps.filter.outputs.infra }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            go: ['go.mod', 'go.sum', 'cmd/**', 'internal/**', 'build/go.Dockerfile', '.golangci.yml', '.github/workflows/ci.yml']
+            rust: ['gateway/**', 'tools.versions', '.github/workflows/ci.yml']
+            web: ['web/**', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', '.github/workflows/ci.yml']
+            infra: ['deploy/**', 'hack/**', 'tools.versions', '.github/workflows/ci.yml']
+            workflows: ['.github/**']
+
+  go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: golangci-lint (gofmt, govet, gosec, …)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+      - name: test (race detector)
+        run: go test -race -count=1 ./...
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: build binaries
+        run: go build -trimpath ./cmd/...
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: toolchain (pinned MSRV = stable used locally)
+        run: rustup toolchain install 1.98.1 --profile minimal -c clippy,rustfmt && rustup default 1.98.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            gateway/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('gateway/Cargo.lock') }}
+      - name: cargo-deny and cargo-nextest (checksum-verified, versions from tools.versions)
+        run: bash ../hack/install-tools.sh cargo-deny cargo-nextest && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo nextest run --locked
+      - run: cargo deny check
+      - run: cargo build --release --locked
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0 (reads packageManager)
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - name: build static exports (+ CSP hashes in _headers)
+        run: pnpm run build
+
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: tools (yq via go install, verified by sum.golang.org; kubeconform pinned)
+        run: |
+          bash hack/install-tools.sh yq
+          GOBIN="$HOME/.local/bin" go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: shellcheck (preinstalled on the runner image)
+        run: shellcheck hack/*.sh
+      - name: vendored manifests match SHA256SUMS
+        run: cd deploy/vendor && sha256sum -c --quiet SHA256SUMS
+      - run: bash hack/check-secrets.sh
+      - run: bash hack/check-manifests.sh
+
+  workflows:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: zizmor
+        run: pipx run zizmor==1.30.1 --persona=regular .github/workflows
+
+  # Always runs: secrets in any file, vulnerable lockfile dependencies, IaC/Dockerfile misconfigurations.
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: trivy fs (secrets, vulnerabilities, misconfigurations)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,vuln,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: false
+          trivyignores: .trivyignore.yaml
+          skip-dirs: third_party,deploy/vendor
+
+  images:
+    needs: [changes, go, rust]
+    if: >-
+      always() && !cancelled() && !contains(needs.*.result, 'failure') &&
+      (needs.changes.outputs.go == 'true' || needs.changes.outputs.rust == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: control-api, file: build/go.Dockerfile, context: ., args: "BINARY=control-api"}
+          - {name: pg-gateway, file: gateway/Dockerfile, context: gateway, args: ""}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: hadolint
+        run: docker run --rm -i hadolint/hadolint:v2.15.1 < "${MATRIX_FILE}"
+        env:
+          MATRIX_FILE: ${{ matrix.file }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: build (amd64, not pushed)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          build-args: ${{ matrix.args }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ci/${{ matrix.name }}:${{ github.sha }}
+      - name: trivy image (HIGH/CRITICAL fail, written acceptances in .trivyignore.yaml)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ci/${{ matrix.name }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml

@@ -1,0 +1,15 @@
+# Security headers for every response of the public site (Cloudflare Workers Static Assets
+# `_headers`, .kiro/steering/50-web.md). Next.js copies this file to out/_headers; the post-build
+# step (dbcloud-csp-headers from web/ui) then appends the CSP with inline-script hashes to the
+# `/*` rule, so the CSP must not be set here and `/*` must stay the last rule.
+#
+# HSTS: 31,536,000 s = 1 year. No `preload`: preload-list submission is a separate decision.
+# X-Frame-Options: enforced clickjacking protection while the CSP (and its frame-ancestors) is
+# still Report-Only.
+# Permissions-Policy: browser features no dbcloud page uses are switched off.
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Permissions-Policy: accelerometer=(), autoplay=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=()

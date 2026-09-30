@@ -1,0 +1,25 @@
+// Shared TypeScript compiler options for every web workspace package (web/site, web/customer,
+// web/admin, web/ui). Each package's tsconfig.json extends this and only adds its own `include`
+// and plugins. It sets no paths or emit options: Next.js (webpack) does the bundling and `tsc`
+// only type-checks (.kiro/steering/50-web.md "Structure").
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    // 50-web.md: strict plus noUncheckedIndexedAccess.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    // Type-check only; `next build` produces the output.
+    "noEmit": true,
+    // Off so `tsc --noEmit` leaves no .tsbuildinfo files in the tree.
+    "incremental": false,
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  }
+}

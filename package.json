@@ -1,0 +1,14 @@
+{
+  "name": "dbcloud",
+  "private": true,
+  "description": "Root of the dbcloud pnpm workspace (web/*): pins pnpm and Node and runs lint, typecheck and build across every workspace package. Holds no dependencies of its own.",
+  "packageManager": "pnpm@12.8.1",
+  "engines": {
+    "node": ">=24.21.0 <25"
+  },
+  "scripts": {
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r build"
+  }
+}
