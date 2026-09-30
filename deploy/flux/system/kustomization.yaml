@@ -1,0 +1,33 @@
+# Flux itself (source, kustomize and helm controllers), from the output of the pinned Flux CLI
+# (deploy/vendor/flux/<version>/gotk-components.yaml, checksummed), with images pinned by digest
+# (deploy/vendor/images.lock). Applied once by the cell bootstrap; Flux reconciles everything else.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../vendor/flux/2.9.5/gotk-components.yaml
+images:
+  - name: ghcr.io/fluxcd/source-controller
+    digest: sha256:6f20d232d596a758c923d2861f23511718fc303b8a2e36a1434a7c736b9f4268
+  - name: ghcr.io/fluxcd/kustomize-controller
+    digest: sha256:a3a955eb2bc432c2eaa94d2d3714e3beae7fdf17586fd23aadf71ab597ac3339
+  - name: ghcr.io/fluxcd/helm-controller
+    digest: sha256:8ff15409e46d354338045f483d58ca9cb35dffa2f87e4addd1f5eba1e6a9175f
+# Upstream requests 64 Mi with a 1 Gi limit; node memory is shared with tenants, so memory limit = request
+# (60-infrastructure.md). Sizes: peak incl. page cache measured 2026-09-30 on the local cell while applying
+# every layer (source 102 Mi, kustomize 131 Mi, helm 54 Mi) + headroom for more HelmReleases.
+patches:
+  - target: {kind: Deployment, namespace: flux-system, name: source-controller}
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 10m, memory: 128Mi}, limits: {memory: 128Mi}}
+  - target: {kind: Deployment, namespace: flux-system, name: kustomize-controller}
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 10m, memory: 192Mi}, limits: {memory: 192Mi}}
+  - target: {kind: Deployment, namespace: flux-system, name: helm-controller}
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 10m, memory: 128Mi}, limits: {memory: 128Mi}}

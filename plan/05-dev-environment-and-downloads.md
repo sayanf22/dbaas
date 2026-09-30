@@ -200,14 +200,20 @@ The kubeconfig for `c1` points at `https://k8s-c1.admin.example.com` with the cl
 
 ## 6. Local development loop
 
+One-time host preparation (root, from Windows): `wsl -d Ubuntu-24.04 -u root -- bash hack/local-host.sh setup dev`. It loads the WireGuard and thin-pool modules at boot, installs lvm2, xfsprogs and the pinned `lvmd`, and adds a sudo rule that lets `dev` run only the root-owned copy's `lvm-up`, `lvm-down` and `status` commands, which `hack/cell.sh` uses for the TopoLVM loop-file volume groups.
+
 ```bash
-task dev-up     # supabase start + k3d cell "local" (pinned K3s v1.36, 3 servers + 1 agent, same K3s config as production)
-                # + Flux with a local age key + TopoLVM (loop VG) + CNPG + Barman plugin + MinIO (local S3)
-                # + cert-manager (self-signed) + pg-gateway + our services
+task cell:up    # k3d cell "local" (pinned K3s v1.36, same deploy/k3s config as production; PROFILE=starter: 1 server,
+                # default; PROFILE=reference: 3 servers + 1 agent) + Flux from a local OCI artifact with a local age key
+                # + TopoLVM (host lvmd, loop VG per tenant node) + CNPG + Barman plugin + SeaweedFS (local S3, ADR-026)
+                # + cert-manager (self-signed) + VictoriaMetrics single
+task cell:sync  # roll out changes under deploy/ through Flux, as production does
+task cell:test  # Step 0.3 acceptance suite (test/cell) against the running cell
+task cell:down  # delete the cell, its registry and the loop-file volume groups
+task db:up      # supabase start (admin DB + Auth)
 task gen        # sqlc, oapi-codegen, controller-gen, SDKs
 task test       # Go unit + integration (testcontainers), cargo nextest, Vitest
-task e2e        # Chainsaw suites against k3d, gateway client matrix
-task dev-down
+task e2e        # Chainsaw suites against k3d, gateway client matrix (from Step 0.4)
 ```
 
 Local hostnames: `*.localtest.me` resolves to 127.0.0.1, so SNI routing is tested with real names, e.g.

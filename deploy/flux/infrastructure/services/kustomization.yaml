@@ -1,0 +1,8 @@
+# Platform services every cell runs once the operators and storage are ready: the certificate issuers and
+# VictoriaMetrics single (plan/01 §15). Cell-specific pieces (production DNS-01 issuer, local S3) live in
+# the cluster overlays under deploy/flux/clusters/<cell>/.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - issuers.yaml
+  - victoria-metrics.yaml

@@ -1,0 +1,52 @@
+# K3s server configuration shared by every server of every cell (plan/01 §5.1, 60-infrastructure.md).
+# Installed as /etc/rancher/k3s/config.yaml.d/10-dbcloud-server.yaml by the node bootstrap (Step 0.12) and
+# mounted the same way into the local k3d cell. Per-node values (node-ip, tls-san, cluster-init/server,
+# node-taint, node-label, etcd S3 target) come from the bootstrap in a later drop-in, never from this file.
+# Keys marked "critical" must be identical on every server or joining fails (docs.k3s.io/cli/server).
+
+# Pod network: WireGuard-encrypted flannel between nodes (plan/01 §4.2). Critical.
+flannel-backend: wireguard-native
+# Traefik, ServiceLB and local-path are replaced by Cloudflare Tunnel, pg-gateway hostPort and TopoLVM. Critical.
+disable:
+  - traefik
+  - servicelb
+  - local-storage
+# Spegel: nodes serve cached images to each other, so a registry outage doesn't block restarts (plan/01 §5.1).
+embedded-registry: true
+# Secrets encrypted at rest in etcd (CIS 1.2.27). Critical.
+secrets-encryption: true
+# Kubelet refuses to start if kernel settings differ from its defaults (CIS 4.2.6); the bootstrap sets them.
+protect-kernel-defaults: true
+
+# etcd snapshots every 6 h, 28 kept (7 days), compressed (plan/01 §5.1); the S3 upload target is per cell.
+etcd-snapshot-schedule-cron: "0 */6 * * *"
+etcd-snapshot-retention: 28
+etcd-snapshot-compress: true
+
+kube-apiserver-arg:
+  # EventRateLimit caps event floods from misbehaving controllers (CIS 1.2.9); limits are in psa.yaml.
+  - enable-admission-plugins=NodeRestriction,EventRateLimit
+  # Pod Security Admission (restricted by default) and EventRateLimit settings (plan/01 §6.3).
+  - admission-control-config-file=/var/lib/rancher/k3s/server/psa.yaml
+  # API audit log, rotated: 30 days, 10 files of 100 MB (CIS 1.2.16-1.2.19, K3s hardening guide).
+  - audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log
+  - audit-policy-file=/var/lib/rancher/k3s/server/audit.yaml
+  - audit-log-maxage=30
+  - audit-log-maxbackup=10
+  - audit-log-maxsize=100
+  # Service account tokens keep their requested lifetime (CIS 1.2.x, K3s hardening guide).
+  - service-account-extend-token-expiration=false
+kube-controller-manager-arg:
+  # Garbage-collect terminated pods beyond 100 (CIS 1.3.1).
+  - terminated-pod-gc-threshold=100
+kubelet-arg:
+  # 110 pods per node: the Kubernetes default the capacity model uses (plan/03 §6).
+  - max-pods=110
+  # Reservations for the K3s server process and the OS (plan/03 §6); changing them updates that table.
+  - kube-reserved=cpu=500m,memory=2Gi
+  - system-reserved=cpu=200m,memory=512Mi
+  - eviction-hard=memory.available<100Mi
+  # Idle exec/port-forward streams close after 5 min (CIS 4.2.5).
+  - streaming-connection-idle-timeout=5m
+  # Modern TLS suites only for the kubelet API (CIS 4.2.12).
+  - tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305

@@ -1,0 +1,7 @@
+# Local-cell overrides for K3s agents, loaded after deploy/k3s/agent.yaml. Same reasons as 90-local-server.yaml.
+protect-kernel-defaults: false
+kubelet-arg:
+  - max-pods=110
+  - eviction-hard=memory.available<100Mi
+  - streaming-connection-idle-timeout=5m
+  - tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305

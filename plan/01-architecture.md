@@ -341,7 +341,7 @@ Known limit, documented for customers: `channel_binding=require` is not supporte
 - **Static stability for single-instance tenants:** since CNPG 1.27 a primary's liveness probe fails when the instance can reach neither the Kubernetes API nor a peer. A single-instance cluster has no peer, so an API outage would restart every primary. The operator therefore renders `spec.probes.liveness.isolationCheck.enabled: false` for `instances: 1` and keeps the check (with Lease-based primary election) for HA clusters. The Static stability gate stops all three K3s servers' API for 15 minutes and expects zero primary restarts.
 - **No evictions of node-bound pods:** `tenant-local` pods tolerate `node.kubernetes.io/unreachable` and `node.kubernetes.io/not-ready` without a time limit, because their volume can't move to another node.
 - **Pooling:** one CNPG `Pooler` per tenant (`rw`, transaction mode) for the pooled hostname; the `-direct` hostname reaches Postgres itself. PgBouncer resources are set on the `pgbouncer` container of the Pooler template (`03-…` §5).
-- **Parameters per plan** (from the plan catalog): `shared_buffers` ≈ 25 % of RAM, `effective_cache_size` ≈ 75 %, `max_connections` per plan, `max_wal_size` sized to the volume (512 MB for `base`), `wal_compression = lz4` if the pinned image is built with it (checked in Step 0.3), `/dev/shm` capped with `ephemeralVolumesSizeLimit.shm`. Customers can't use `ALTER SYSTEM`; allowed parameters are validated by control-api and applied through the CR.
+- **Parameters per plan** (from the plan catalog): `shared_buffers` ≈ 25 % of RAM, `effective_cache_size` ≈ 75 %, `max_connections` per plan, `max_wal_size` sized to the volume (512 MB for `base`), `wal_compression = lz4` (the pinned image is built with lz4 and zstd, checked in Step 0.3; `02-…` §5), `/dev/shm` capped with `ephemeralVolumesSizeLimit.shm`. Customers can't use `ALTER SYSTEM`; allowed parameters are validated by control-api and applied through the CR.
 - **Extensions:** approved catalog per image (`pg_stat_statements`, `pgcrypto`, `uuid-ossp`, `citext`, `pg_trgm`, `btree_gin`, `btree_gist`, `hstore`, plus `pgvector`/`postgis` when the image carries them). `dblink` and `postgres_fdw` are not offered.
 - **Roles:** `owner`, `app`, `ai_read`, `ai_write`, `platform_monitor`. No tool path uses a superuser.
 
@@ -591,8 +591,8 @@ Per-language secure-coding rules are in `.kiro/steering/` and summarized in `07-
 
 | Dimension | First target | How it grows without redesign | Evidence / basis |
 |---|---|---|---|
-| Tenants per reference cell | ~53 `base`, ~29 `plus` or ~15 `premium` | growth nodes | `03-…` §6 |
-| Tenants per added node (8 vCPU / 24 GB) | ~26 `base` | more nodes | `03-…` §6–§7 |
+| Tenants per reference cell | ~47 `base`, ~27 `plus` or ~15 `premium` | growth nodes | `03-…` §6 |
+| Tenants per added node (8 vCPU / 24 GB) | ~25 `base` | more nodes | `03-…` §6–§7 |
 | Tenants per cell | ≤ 1,500 | more cells | Neon's Kubernetes limit experience (~10k DBs/cluster) |
 | Nodes per cell | ≤ 50 | more cells | K3s server sizing (2 vCPU / 4 GB servers handle up to 350 agents) |
 | Cells | 1 → 2 (another region) → more (any provider, incl. AWS/GCP) | cell registry row + agent install | cells are independent K3s clusters |

@@ -1,0 +1,8 @@
+# Local S3 (SeaweedFS) and its S3 identity. secret.sops.yaml is generated per developer by hack/cell-flux.sh,
+# SOPS-encrypted with the local age key and git-ignored: Flux decrypts it in the cell (the same path production
+# secrets take), but a developer's random keys never enter git.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - seaweedfs.yaml
+  - secret.sops.yaml

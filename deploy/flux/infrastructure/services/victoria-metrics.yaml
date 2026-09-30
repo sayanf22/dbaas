@@ -1,0 +1,53 @@
+# VictoriaMetrics single (plan/01 §15): one binary that stores metrics and scrapes the cluster with its
+# built-in Kubernetes service discovery (kubelet, cAdvisor, endpoints). vmagent, vmalert and Alertmanager
+# join in Step 1.3/1.7. Data sits on a TopoLVM volume on a tenant node.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: victoriametrics
+  namespace: observability
+spec:
+  interval: 24h
+  url: https://victoriametrics.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: victoria-metrics
+  namespace: observability
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: victoria-metrics-single
+      version: 0.48.0            # tools.versions VICTORIA_METRICS_CHART; appVersion v1.153.0
+      sourceRef: {kind: HelmRepository, name: victoriametrics}
+  install:
+    remediation: {retries: 3}
+  upgrade:
+    remediation: {retries: 3}
+  values:
+    server:
+      image:
+        # Digest from deploy/vendor/images.lock; the chart builds repository:tag, so the tag carries it.
+        tag: v1.153.0@sha256:5eff7af5341e401471002f58d106d399e614a62f3d240f2dbc21901e49eed5dd
+      # 14 days locally; production sizes retention against disk in Step 1.7.
+      retentionPeriod: 14d
+      nodeSelector: {dbcloud.io/pool: tenant}
+      persistentVolume:
+        enabled: true
+        storageClassName: tenant-local
+        size: 4Gi
+      # 256 Mi was OOM-killed seconds after the first scrape (2026-09-30); 512 Mi, then sized from the
+      # measured working set. VictoriaMetrics sizes its caches from the cgroup limit (60 % by default).
+      resources:
+        requests: {cpu: 20m, memory: 512Mi}
+        limits: {memory: 512Mi}
+      scrape:
+        # Built-in scrape of the Kubernetes API, kubelets and cAdvisor (chart default job list).
+        enabled: true

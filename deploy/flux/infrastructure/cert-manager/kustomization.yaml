@@ -1,0 +1,32 @@
+# cert-manager from the vendored, checksummed release manifest (deploy/vendor/SHA256SUMS), plus the resource
+# requests the upstream manifest leaves out (60-infrastructure.md: every container has requests, memory limit
+# = request, no CPU limit for platform pods). Sizes are measured idle usage + headroom (plan/03 §6).
+# cainjector stays on: the webhook's caBundle is injected by it (cert-manager.io/inject-ca-from-secret).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../vendor/cert-manager/1.21.2/cert-manager.yaml
+# Images by digest (deploy/vendor/images.lock).
+images:
+  - name: quay.io/jetstack/cert-manager-controller
+    digest: sha256:70f532fd9cfde0b09d55687200942399d89838bc2d5d5b45152eb799a15912b8
+  - name: quay.io/jetstack/cert-manager-webhook
+    digest: sha256:a60e2dac46dbb8a7f3df95c54ce941012f54c2fe022f0ee55aaa1ab40ed957ae
+  - name: quay.io/jetstack/cert-manager-cainjector
+    digest: sha256:c85268c64f2e0e76684bf5fe8906caff34b82523561c6affe0fae3546bd87562
+patches:
+  - target: {kind: Deployment, namespace: cert-manager, name: cert-manager}
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 10m, memory: 96Mi}, limits: {memory: 96Mi}}   # measured 46 Mi idle
+  - target: {kind: Deployment, namespace: cert-manager, name: cert-manager-cainjector}
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 5m, memory: 64Mi}, limits: {memory: 64Mi}}    # measured 32 Mi idle
+  - target: {kind: Deployment, namespace: cert-manager, name: cert-manager-webhook}
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 5m, memory: 64Mi}, limits: {memory: 64Mi}}    # measured 37 Mi idle

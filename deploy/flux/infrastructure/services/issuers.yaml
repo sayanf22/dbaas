@@ -1,0 +1,33 @@
+# Certificate issuers. `dbcloud-internal-ca` signs certificates that only our own components trust (webhooks,
+# the gateway's peer mTLS in Step 0.5, the local wildcard for *.db.localtest.me). Public certificates in
+# production come from Let's Encrypt DNS-01 (Step 1.3), added in the c1 overlay.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}
+---
+# The CA itself: ECDSA P-256, 10 years, stored as a Secret readable only inside cert-manager's namespace.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dbcloud-internal-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: dbcloud internal CA
+  secretName: dbcloud-internal-ca
+  duration: 87600h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef: {kind: ClusterIssuer, name: selfsigned, group: cert-manager.io}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: dbcloud-internal-ca
+spec:
+  ca:
+    secretName: dbcloud-internal-ca

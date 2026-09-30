@@ -1,0 +1,53 @@
+# Local cell, reference shape (plan/01 §5.2): three K3s servers on embedded etcd plus one agent.
+#   server-0 = cp-1    control plane only (CriticalAddonsOnly taint, no tenant label)
+#   server-1 = node-1  control plane + platform + tenants
+#   server-2 = node-2  control plane + platform + tenants
+#   agent-0  = node-3  growth node: tenants only
+# The k3d load balancer gives kubectl one address for the three API servers (used to test that the API
+# survives the loss of a server). hack/cell.sh sets REPO, LOCAL_STATE and K3S_IMAGE.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: local
+servers: 3
+agents: 1
+image: ${K3S_IMAGE}
+registries:
+  use: [k3d-dbcloud-registry:5000]
+volumes:
+  - volume: ${REPO}/deploy/k3s/server.yaml:/etc/rancher/k3s/config.yaml.d/10-dbcloud-server.yaml
+    nodeFilters: [server:*]
+  - volume: ${REPO}/deploy/local/k3s/90-local-server.yaml:/etc/rancher/k3s/config.yaml.d/90-local.yaml
+    nodeFilters: [server:*]
+  - volume: ${REPO}/deploy/k3s/psa.yaml:/var/lib/rancher/k3s/server/psa.yaml
+    nodeFilters: [server:*]
+  - volume: ${REPO}/deploy/k3s/audit.yaml:/var/lib/rancher/k3s/server/audit.yaml
+    nodeFilters: [server:*]
+  - volume: ${REPO}/deploy/k3s/agent.yaml:/etc/rancher/k3s/config.yaml.d/10-dbcloud-agent.yaml
+    nodeFilters: [agent:*]
+  - volume: ${REPO}/deploy/local/k3s/90-local-agent.yaml:/etc/rancher/k3s/config.yaml.d/90-local.yaml
+    nodeFilters: [agent:*]
+  - volume: /dev:/dev
+    nodeFilters: [server:1, server:2, agent:0]
+  - volume: ${LOCAL_STATE}/run/k3d-local-server-1:/run/topolvm
+    nodeFilters: [server:1]
+  - volume: ${LOCAL_STATE}/run/k3d-local-server-2:/run/topolvm
+    nodeFilters: [server:2]
+  - volume: ${LOCAL_STATE}/run/k3d-local-agent-0:/run/topolvm
+    nodeFilters: [agent:0]
+options:
+  k3d:
+    wait: true
+    timeout: 420s
+  k3s:
+    extraArgs:
+      - arg: --cluster-init
+        nodeFilters: [server:0]
+      - arg: --node-taint=CriticalAddonsOnly=true:NoExecute   # cp-1 runs only the control plane
+        nodeFilters: [server:0]
+    nodeLabels:
+      - label: dbcloud.io/pool=tenant
+        nodeFilters: [server:1, server:2, agent:0]
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

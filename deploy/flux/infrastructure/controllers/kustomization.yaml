@@ -1,0 +1,35 @@
+# Operators every cell runs, after cert-manager: CloudNativePG, its Barman Cloud Plugin (vendored manifests)
+# and TopoLVM (Helm chart, pinned). Resource patches follow 60-infrastructure.md (memory limit = request,
+# no CPU limit); sizes are measured idle usage + headroom for growth with tenants (plan/03 §6).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../vendor/cnpg/1.30.1/cnpg-1.30.1.yaml
+  - ../../../vendor/barman-cloud/0.15.0/manifest.yaml
+  - topolvm.yaml
+# Images by digest (deploy/vendor/images.lock).
+images:
+  - name: ghcr.io/cloudnative-pg/cloudnative-pg
+    digest: sha256:923c267ec29636db3bee20f993d0ec4973fa22998e1adad37da79e4d32b5bc07
+  - name: ghcr.io/cloudnative-pg/plugin-barman-cloud
+    digest: sha256:563c680fe7fda3466ca2b1f55a1397ed2ddc9e760360107dd7724f1959c1a536
+patches:
+  # The plugin injects this sidecar into every tenant pod; pin it by digest too (value is base64).
+  - target: {kind: Secret, namespace: cnpg-system, name: plugin-barman-cloud-2b4mtt7m69}
+    patch: |
+      - op: replace
+        path: /data/SIDECAR_IMAGE
+        # base64 of ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.15.0@sha256:06c78deca670525daa35fb1e5323159092785d11cf87b86217bdd5c679a41a84
+        value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXI6djAuMTUuMEBzaGEyNTY6MDZjNzhkZWNhNjcwNTI1ZGFhMzVmYjFlNTMyMzE1OTA5Mjc4NWQxMWNmODdiODYyMTdiZGQ1YzY3OWE0MWE4NA==
+  # Upstream sets requests 100m/100Mi and limits 100m/200Mi; CPU-throttling the operator slows every
+  # tenant's reconcile, so the CPU limit goes and memory request = limit. Measured 85 Mi idle.
+  - target: {kind: Deployment, namespace: cnpg-system, name: cnpg-controller-manager}
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 20m, memory: 192Mi}, limits: {memory: 192Mi}}
+  - target: {kind: Deployment, namespace: cnpg-system, name: barman-cloud}
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value: {requests: {cpu: 10m, memory: 96Mi}, limits: {memory: 96Mi}}   # measured 44 Mi idle

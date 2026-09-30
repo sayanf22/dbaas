@@ -1,0 +1,25 @@
+# Where the local cell's Flux pulls from: an OCI artifact of the repository's deploy/ directory in the local
+# registry (Flux's documented local-dev pattern, github.com/stefanprodan/flux-local-dev), so changes are
+# tested without pushing to GitHub. Production cells use the same Kustomization layout from git (Step 1.3).
+# Applied once by hack/cell.sh during bootstrap.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: dbcloud
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: oci://k3d-dbcloud-registry:5000/dbcloud-manifests
+  ref: {tag: local}
+  insecure: true            # plain-HTTP registry reachable only inside the k3d Docker network
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef: {kind: OCIRepository, name: dbcloud}
+  path: ./flux/clusters/local
+  prune: true

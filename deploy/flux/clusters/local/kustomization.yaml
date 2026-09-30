@@ -1,0 +1,8 @@
+# Entry point of the local cell, reconciled by the `flux-system` Kustomization (deploy/local/flux-sync.yaml).
+# Layers apply in order, each waiting for the previous one to be healthy:
+#   cert-manager -> controllers (CNPG, Barman plugin, TopoLVM) -> services (issuers, VictoriaMetrics)
+#                                                            -> local-s3 (SeaweedFS, SOPS-encrypted keys)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - infrastructure.yaml

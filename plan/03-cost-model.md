@@ -21,9 +21,9 @@ All prices checked 2026-09-29. USD prices are converted at **₹96 per US$** (US
 | Domain | `.com` or `.in` | ~55–85 |
 | **Total** | | **≈ ₹5,700–5,900 at launch; ≈ ₹8,100–8,300 with Supabase Pro** |
 
-**Launch runs on the starter cell (ADR-025):** only `node-1` (≤ ₹2,300), ≈ ₹2,370/month in total, break-even at 9 `base` tenants (§6.1, §7). The table above is the reference cell it grows into at ~20 tenants.
+**Launch runs on the starter cell (ADR-025):** only `node-1` (≤ ₹2,300), ≈ ₹2,370/month in total, break-even at 9 `base` tenants (§6.1, §7). The table above is the reference cell it grows into at ~18 tenants.
 
-Worst case (every tenant disk full on both nodes, i.e. ~53 paying tenants) is ≈ ₹9,025 with Supabase Pro, and by then revenue is ≈ ₹15,800/month.
+Worst case (every tenant disk full on both nodes, i.e. ~47 paying tenants) is ≈ ₹9,025 with Supabase Pro, and by then revenue is ≈ ₹14,050/month.
 
 Paid from revenue, not the budget: Razorpay takes ≈ **₹12.45** of each ₹352.82 `base` payment (2.99 % + GST on the fee). One-time costs: ₹199 Razorpay KYC and the domain's first year.
 
@@ -108,11 +108,11 @@ Each tenant runs **two pods**: the Postgres pod (Postgres container + the Barman
 
 | Plan | Postgres container (CPU req / limit, memory) | Backup sidecar | PgBouncer pod | Tenant total (CPU req / memory / pods / disk) |
 |---|---|---|---|---|
-| `base` | 100m / 500m, 512 Mi | 5m / 200m, 96 Mi | 5m / 100m, 48 Mi | **110m / 656 Mi / 2 / 5 GB** |
-| `plus` | 250m / 1000m, 1,024 Mi | 5m / 200m, 96 Mi | 5m / 100m, 48 Mi | **260m / 1,168 Mi / 2 / 10 GB** |
-| `premium` | 500m / 1000m, 2,048 Mi | 5m / 200m, 96 Mi | 5m / 100m, 48 Mi | **510m / 2,192 Mi / 2 / 20 GB** |
+| `base` | 100m / 500m, 512 Mi | 5m / 200m, 160 Mi | 5m / 100m, 48 Mi | **110m / 720 Mi / 2 / 5 GB** |
+| `plus` | 250m / 1000m, 1,024 Mi | 5m / 200m, 160 Mi | 5m / 100m, 48 Mi | **260m / 1,232 Mi / 2 / 10 GB** |
+| `premium` | 500m / 1000m, 2,048 Mi | 5m / 200m, 160 Mi | 5m / 100m, 48 Mi | **510m / 2,256 Mi / 2 / 20 GB** |
 
-Sidecar and PgBouncer sizes are planning values. Spike S4 measures the sidecar's peak memory (it runs `barman-cloud-wal-archive`, a Python process, per WAL file) and S2 measures PgBouncer; the plan catalog takes the measured values.
+**Backup sidecar, measured (spike S4, local part, 2026-09-30):** during a base backup of a 1 GB database with WAL archived concurrently, the sidecar's peak non-reclaimable memory is 142–145 MiB with one upload worker (`ObjectStore.spec.configuration.data.jobs: 1`) and 177 MiB with the default two, for the same duration: the 200m CPU limit bounds throughput, not parallelism. The planning value of 96 Mi was OOMKilled, so the plans use 160 Mi with `jobs: 1`. At 200m CPU a base backup runs at ≈ 4 MB/s (1 GB in ≈ 4 min; a full 20 GB `premium` disk in ≈ 80 min), well inside the weekly slot. S4 on R2 re-measures both. PgBouncer's 48 Mi stays a planning value until S2.
 
 ---
 
@@ -125,44 +125,46 @@ Sidecar and PgBouncer sizes are planning values. Spike S4 measures the sidecar's
 | Component | Pods | CPU | Memory |
 |---|---|---|---|
 | K3s add-ons kept: CoreDNS ×2, metrics-server | 3 | 300m | 210 Mi |
-| TopoLVM (controller, node ×2) | 3 | 30m | 150 Mi |
-| cert-manager (controller, webhook; cainjector off) | 2 | 20m | 96 Mi |
-| CNPG operator + Barman Cloud Plugin | 2 | 40m | 192 Mi |
-| Flux (source, kustomize, helm) | 3 | 30m | 192 Mi |
+| TopoLVM (controller 192 Mi, node ×2 at 128 Mi) | 3 | 65m | 448 Mi |
+| cert-manager (controller, webhook, cainjector: the webhook's CA bundle needs it) | 3 | 20m | 224 Mi |
+| CNPG operator (192 Mi) + Barman Cloud Plugin (96 Mi) | 2 | 30m | 288 Mi |
+| Flux (source 128 Mi, kustomize 192 Mi, helm 128 Mi) | 3 | 30m | 448 Mi |
 | system-upgrade-controller | 1 | 10m | 32 Mi |
-| VictoriaMetrics single, vmagent, vmalert, Alertmanager, kube-state-metrics, node-exporter ×2 | 7 | 70m | 450 Mi |
+| VictoriaMetrics single (512 Mi, measured: 256 Mi was OOMKilled), vmagent, vmalert, Alertmanager, kube-state-metrics, node-exporter ×2 | 7 | 70m | 800 Mi |
 | VictoriaLogs + Fluent Bit ×2 | 3 | 30m | 160 Mi |
 | Grafana | 1 | 10m | 128 Mi |
 | cloudflared ×2 | 2 | 20m | 96 Mi |
 | pg-gateway (one per node) | 2 | 40m | 64 Mi |
 | control-api ×2, worker ×2, tenant-operator ×2, mcp-server ×2, mcp-auth ×2, cluster-agent, River UI | 13 | 220m | 704 Mi |
-| **Total** | **42** | **≈ 820m** | **≈ 2.4 GiB** |
+| **Total** | **43** | **≈ 850m** | **≈ 3.5 GiB** |
 
-**Left for tenants on the two nodes** after reservations, the platform and 15 % headroom: CPU ≈ **11,590m**, memory ≈ **34 GiB**, pod slots ≈ **90** tenants (max pods 110 per node), disk ≈ **300 GB** of `tenantvg` (200 GB NVMe − ~50 GB root and etcd per node).
+The rows for components that already run on the local cell (K3s add-ons, TopoLVM, cert-manager, CNPG + plugin, Flux, VictoriaMetrics single) are the requests measured and set in Step 0.3 (2026-09-30); the others stay planning values until their step. K3s's packaged CoreDNS (70 Mi request, 170 Mi limit) and metrics-server (70 Mi, no limit) don't yet have limit = request; Step 1.3 replaces their packaged manifests with sized copies.
+
+**Left for tenants on the two nodes** after reservations, the platform and 15 % headroom: CPU ≈ **11,690m**, memory ≈ **33.4 GiB**, pod slots ≈ **90** tenants (max pods 110 per node), disk ≈ **300 GB** of `tenantvg` (200 GB NVMe − ~50 GB root and etcd per node).
 
 | Plan | Bound by CPU | memory | pods | disk | **Tenants per reference cell** | Revenue when full (ex-GST) |
 |---|---|---|---|---|---|---|
-| `base` | 105 | 53 | 90 | 60 | **~53** | ₹15,847 |
-| `plus` | 44 | 29 | 90 | 30 | **~29** | ₹20,271 |
+| `base` | 106 | 47 | 90 | 60 | **~47** | ₹14,053 |
+| `plus` | 45 | 27 | 90 | 30 | **~27** | ₹18,873 |
 | `premium` | 22 | 15 | 90 | 15 | **~15** | ₹20,985 |
 
-Memory binds first for every plan, so a node with more RAM (8 vCPU / 32 GB, 300 GB) raises capacity to ~74 `base` / ~41 `plus` / ~22 `premium` if the chosen provider offers it within the ceiling. The real allocatable values are read in Step 1.3 and replace these planning numbers.
+Memory binds first for every plan, so a node with more RAM (8 vCPU / 32 GB, 300 GB) raises capacity to ~66 `base` / ~39 `plus` / ~21 `premium` if the chosen provider offers it within the ceiling. The real allocatable values are read in Step 1.3 and replace these planning numbers.
 
 **Node loss:** the two nodes run near full, so the survivor can't absorb the other node's tenants. A lost node is replaced (a new VM joins with the same config) and its tenants restore from R2; the published RTO comes from the node-loss drill. The platform itself survives the loss of any one VM (architecture §1).
 
 ### 6.1 Starter cell: one VM (ADR-025)
 
-One 8 vCPU / 24 GB / 200 GB NVMe VM (≤ ₹2,300/month) runs K3s as a single server with embedded etcd, the platform with **one replica** per component (≈ 700m CPU, ≈ 1.9 GiB memory, ≈ 35 pods) and the tenants. Reservations as above (2.6 GiB); 15 % headroom on CPU and memory.
+One 8 vCPU / 24 GB / 200 GB NVMe VM (≤ ₹2,300/month) runs K3s as a single server with embedded etcd, the platform with **one replica** per component (≈ 720m CPU, ≈ 2.9 GiB memory, ≈ 35 pods) and the tenants. Reservations as above (2.6 GiB); 15 % headroom on CPU and memory.
 
 | Plan | Bound by CPU | memory | pods | disk (150 GB `tenantvg`) | **Tenants on the starter VM** |
 |---|---|---|---|---|---|
-| `base` | 51 | 25 | 37 | 30 | **~25** |
-| `plus` | 21 | 14 | 37 | 15 | **~14** |
-| `premium` | 11 | 7 | 37 | 7 | **~7** |
+| `base` | 50 | 22 | 37 | 30 | **~22** |
+| `plus` | 21 | 13 | 37 | 15 | **~13** |
+| `premium` | 10 | 7 | 37 | 7 | **~7** |
 
-- **Minimum VM** for exactly 10 `base` tenants: 4–6 vCPU / 12 GB (memory: 12 − 2.6 − 1.9 GiB, × 0.85 ≈ 6.4 GiB ÷ 656 Mi ≈ 10). It leaves no room to grow, so the 24 GB VM is the launch choice.
-- **Local measurement (2026-09-30, k3d on 4 CPUs / 8 GB):** 10 `base` tenants scheduled at 88 % of node memory *requests*; real use at idle ≈ 127 MiB per tenant (Postgres + backup sidecar + PgBouncer). Requests stay equal to limits, so the planning numbers above don't count on that slack.
-- **Growth:** at ~20 `base` tenants (80 %), `cp-1` and `node-2` join and the cell becomes the reference cell of §6 (Step 1.13).
+- **Minimum VM** for exactly 10 `base` tenants: 4–6 vCPU / 16 GB (memory: 10 × 720 Mi ÷ 0.85 ≈ 8.3 GiB + 2.6 + 2.9 GiB ≈ 13.8 GiB, so 12 GB no longer fits). It leaves little room to grow, so the 24 GB VM is the launch choice.
+- **Local measurements (2026-09-30, k3d on 4 CPUs / 8 GB):** with the earlier 96 Mi sidecar, 10 `base` tenants scheduled at 88 % of node memory *requests*; with the measured 160 Mi sidecar the same 8 GB node holds 7 (92 % of requests), which matches this table's arithmetic. Real use at idle ≈ 104–127 MiB per tenant (Postgres + backup sidecar + PgBouncer). Requests stay equal to limits, so the planning numbers above don't count on that slack.
+- **Growth:** at ~18 `base` tenants (80 %), `cp-1` and `node-2` join and the cell becomes the reference cell of §6 (Step 1.13).
 
 ---
 
@@ -175,8 +177,8 @@ One 8 vCPU / 24 GB / 200 GB NVMe VM (≤ ₹2,300/month) runs K3s as a single se
 | 5 | 1,495 | 62 | ~2,370 | −937 |
 | **9 (break-even)** | 2,691 | 112 | ~2,370 | **+209** |
 | 10 | 2,990 | 125 | ~2,370 | +495 |
-| 20 (grow trigger) | 5,980 | 249 | ~2,370 | +3,361 |
-| 25 (starter full) | 7,475 | 311 | ~2,370 | +4,794 |
+| 18 (grow trigger) | 5,382 | 224 | ~2,370 | +2,788 |
+| 22 (starter full) | 6,578 | 274 | ~2,370 | +3,934 |
 
 **Reference cell (after Step 1.13):**
 
@@ -185,13 +187,13 @@ One 8 vCPU / 24 GB / 200 GB NVMe VM (≤ ₹2,300/month) runs K3s as a single se
 | Launch, Supabase Free | 1–19 | 299–5,681 | ~5,700–6,000 | −5,400 → −300 |
 | Break-even | ~20 | ~5,980 | ~6,000 | ≈ 0 |
 | Supabase Pro | from ~30 (trigger below) | 8,970+ | ~8,400–8,600 | positive |
-| Cell full | ~53 | ~15,850 | ~8,900 | ≈ +6,950 |
-| 3rd node (8 vCPU / 24 GB) | 53+ | | + ≤ 2,300 | added only when net ≥ its cost |
+| Cell full | ~47 | ~14,050 | ~8,900 | ≈ +5,150 |
+| 3rd node (8 vCPU / 24 GB) | 47+ | | + ≤ 2,300 | added only when net ≥ its cost |
 
 - **Out-of-pocket runway:** until ~20 tenants the platform costs at most ≈ ₹6,000/month, inside the budget.
 - **Supabase Pro trigger:** ~30 paying tenants, or admin DB > 300 MB, or Supabase egress > 3.5 GB/month, or any Supabase restriction notice, whichever comes first.
 - **Growth:** a node is added only when monthly net already covers it. The capacity controller never plans beyond the owner-set `max_nodes`; when capacity is full, sign-ups join a waitlist instead of spending money.
-- Paid-capacity margins on an added 8 vCPU / 24 GB node (~26 `base` per node at ₹2,300): ≈ 70 % before payment fees, far better than hyperscaler pricing because the node is fixed-price.
+- Paid-capacity margins on an added 8 vCPU / 24 GB node (~25 `base` per node at ₹2,300): ≈ 69 % before payment fees, far better than hyperscaler pricing because the node is fixed-price.
 
 ---
 

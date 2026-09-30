@@ -1,7 +1,7 @@
-# Local S3 stand-in for Cloudflare R2 (backups and WAL). SeaweedFS (Apache-2.0) is used instead of MinIO,
-# whose community edition stopped publishing releases in 2025-10. Single pod, local only.
-# The S3 identity comes from the Secret `seaweedfs-s3-config`, created by hack/cell.sh with random keys.
-# SEAWEEDFS_IMAGE is replaced with the digest from deploy/vendor/images.lock by hack/cell.sh.
+# Local S3 stand-in for Cloudflare R2 (backups and WAL). SeaweedFS (Apache-2.0) instead of MinIO, whose
+# community edition stopped publishing releases in 2025-10 (ADR-026). Single pod, local cell only.
+# Applied by the Flux Kustomization `local-s3` (deploy/flux/clusters/local); its S3 identity is the
+# SOPS-encrypted Secret `seaweedfs-s3-config` generated next to this file by hack/cell-flux.sh.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -23,9 +23,10 @@ metadata:
   namespace: dbcloud-system
 spec:
   accessModes: [ReadWriteOnce]
+  storageClassName: tenant-local
   resources:
     requests:
-      storage: 20Gi
+      storage: 10Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -44,6 +45,7 @@ spec:
     spec:
       serviceAccountName: seaweedfs
       automountServiceAccountToken: false
+      nodeSelector: {dbcloud.io/pool: tenant}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -52,7 +54,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: seaweedfs
-          image: SEAWEEDFS_IMAGE
+          image: docker.io/chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
           imagePullPolicy: IfNotPresent
           args:
             - server
@@ -61,14 +63,22 @@ spec:
             - -s3.config=/etc/seaweedfs/s3.json
             - -master.volumeSizeLimitMB=1024   # 1 GiB volumes: small local disk, many small WAL files
             - -volume.max=0                    # 0 = size the number of volumes from free disk space
+            # In-flight upload buffers are unlimited by default; a multipart base backup plus WAL uploads
+            # got the pod OOMKilled at 320 Mi. 64 MiB per layer applies backpressure (clients wait) instead.
+            - -s3.concurrentUploadLimitMB=64
+            - -filer.concurrentUploadLimitMB=64
+            - -volume.concurrentUploadLimitMB=64
+          env:
+            - name: GOMEMLIMIT                 # soft Go heap cap at ~80 % of the 512 Mi limit: GC works harder before OOM
+              value: 410MiB
           ports:
             - {name: s3, containerPort: 8333}
           readinessProbe:
             tcpSocket: {port: s3}
             periodSeconds: 5
           resources:
-            requests: {cpu: 50m, memory: 256Mi}
-            limits: {memory: 256Mi}
+            requests: {cpu: 20m, memory: 512Mi}
+            limits: {memory: 512Mi}            # measured 227 Mi idle; OOMKilled at 320 Mi during a 1 GB base backup
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true      # writes go only to /data and /tmp below
@@ -104,8 +114,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 ---
-# S3 is reachable only from tenant namespaces (label set by the tenant template) on port 8333.
-# The pod needs no egress: master, volume and S3 run in one process and talk over localhost.
+# S3 is reachable only from tenant namespaces (label set by the tenant template) on port 8333. The pod needs
+# no egress: master, volume and S3 run in one process and talk over localhost.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

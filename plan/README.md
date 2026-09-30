@@ -57,10 +57,10 @@ Technically yes, but not in this design. K3s supports embedded etcd only when al
 | Stage | Monthly cost | Holds |
 |---|---|---|
 | Phase 0 (build on this PC) | **₹0** (+ domain) | local k3d cell + local Supabase |
-| **Launch: starter cell, one VM (ADR-025)** | **≈ ₹2,370** | ~25 `base`, ~14 `plus` or ~7 `premium`; **break-even at 9 `base` tenants**; no failover until it grows |
-| Reference cell `c1` (3 VMs, from ~20 tenants) | **≈ ₹5,700–5,900** | ~53 `base`, ~29 `plus` or ~15 `premium` tenants; ≈ ₹15,800/month revenue when full with `base` |
+| **Launch: starter cell, one VM (ADR-025)** | **≈ ₹2,370** | ~22 `base`, ~13 `plus` or ~7 `premium`; **break-even at 9 `base` tenants**; no failover until it grows |
+| Reference cell `c1` (3 VMs, from ~18 tenants) | **≈ ₹5,700–5,900** | ~47 `base`, ~27 `plus` or ~15 `premium` tenants; ≈ ₹14,050/month revenue when full with `base` |
 | + Supabase Pro (~30 tenants) | **≈ ₹8,100–8,300** total | — |
-| + each extra 8 vCPU / 24 GB node | + ≤ ₹2,300, only when revenue covers it | + ~26 `base` tenants |
+| + each extra 8 vCPU / 24 GB node | + ≤ ₹2,300, only when revenue covers it | + ~25 `base` tenants |
 
 Break-even is at 9 `base` tenants on the starter VM and about 20 on the reference cell. Payment-gateway fees (~₹12.45 per ₹352.82 `base` payment) come out of revenue. Details: `03-…` §1, §6, §7.
 

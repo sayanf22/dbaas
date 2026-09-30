@@ -85,11 +85,11 @@ Selection rules:
 | Layer | Choice | Version | Why |
 |---|---|---|---|
 | Postgres operator | **CloudNativePG** | **1.30.1** (supports Kubernetes 1.34–1.36; adopt 1.31 after its release and a soak) | Declarative clusters, roles, databases, poolers, CNPG-I plugins, Lease-based primary election |
-| PostgreSQL | via CNPG `ClusterImageCatalog` | **18.6** | Current major and minor |
+| PostgreSQL | via CNPG `ClusterImageCatalog` | **18.6** (`ghcr.io/cloudnative-pg/postgresql:18.6-standard-trixie`, by digest) | Current major and minor. Built `--with-lz4 --with-zstd` (plus ICU, LLVM, libxml), checked with `pg_config --configure` in Step 0.3, so `wal_compression = lz4` is available |
 | Backups | **Barman Cloud Plugin** | **0.15.0** (Barman 3.20) | Official CNPG backup plugin; S3-compatible targets; sidecar resources and retention interval set per `ObjectStore` |
 | Pooler | PgBouncer via CNPG `Pooler` (one per tenant) | bundled | Per-tenant, operator-managed |
 | Local storage | **TopoLVM** on the NVMe volume group `tenantvg` | Helm chart **17.2.0** | Capacity-aware LVM CSI, thick volumes, online expansion |
-| Certificates | **cert-manager** + Let's Encrypt (DNS-01, Cloudflare solver) | **1.21.2** (cainjector disabled) | Wildcard `*.db.example.com` |
+| Certificates | **cert-manager** + Let's Encrypt (DNS-01, Cloudflare solver) | **1.21.2** (cainjector kept: it injects the webhook's CA bundle) | Wildcard `*.db.example.com` |
 | Metrics | **VictoriaMetrics** single-node + vmagent + vmalert + Alertmanager, from Helm charts (no operator) | pin at install | Small footprint; vmagent discovers CNPG pods by label and scrapes etcd |
 | Logs | **VictoriaLogs** + **Fluent Bit** | pin at install | Small footprint; also ships the K3s API audit log |
 | Dashboards | **Grafana** OSS + CNPG dashboard (grafana.com 20417) | pin at install | Standard |

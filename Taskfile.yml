@@ -73,13 +73,21 @@ tasks:
       - docker buildx build --load -t dbcloud/pg-gateway:dev gateway
 
   cell:up:
-    desc: Start the local starter cell (k3d + cert-manager + CNPG + Barman plugin + SeaweedFS)
-    cmds: [bash hack/cell.sh up]
+    desc: "Start the local cell under Flux (PROFILE=starter: 1 server, default; PROFILE=reference: 3 servers + 1 agent)"
+    cmds: ['bash hack/cell.sh up {{.PROFILE | default "starter"}}']
+
+  cell:sync:
+    desc: Roll out changes under deploy/ to the running cell through Flux
+    cmds: [bash hack/cell-flux.sh]
 
   cell:down:
-    desc: Delete the local starter cell
+    desc: Delete the local cell and its LVM loop files
     cmds: [bash hack/cell.sh down]
 
   cell:status:
-    desc: Show nodes and Postgres clusters of the local cell
+    desc: Show nodes, Flux layers and Postgres clusters of the local cell
     cmds: [bash hack/cell.sh status]
+
+  cell:test:
+    desc: Step 0.3 acceptance tests against the running cell (PSA, audit, isolation, TopoLVM, PITR, WireGuard)
+    cmds: [go test -tags cell -count=1 -v -timeout 40m ./test/cell/]

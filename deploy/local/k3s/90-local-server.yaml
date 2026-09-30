@@ -1,0 +1,13 @@
+# Local-cell overrides for K3s servers, loaded after deploy/k3s/server.yaml (drop-ins merge by file name).
+# Each override exists only because the local cell runs as containers on one PC; production never loads it.
+#
+# protect-kernel-defaults: the kernel is shared by every WSL distro and Docker Desktop; its sysctls can't be
+# set to the CIS values from inside a node container.
+protect-kernel-defaults: false
+# kubelet-arg replaces the whole production list: all nodes share one PC's memory, so per-node
+# reservations would only hide capacity. Every other kubelet setting is the same as production.
+kubelet-arg:
+  - max-pods=110
+  - eviction-hard=memory.available<100Mi
+  - streaming-connection-idle-timeout=5m
+  - tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305

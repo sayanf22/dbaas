@@ -1,79 +1,86 @@
 #!/usr/bin/env bash
-# Creates or deletes the local starter cell: k3d (one K3s server on embedded etcd) + cert-manager + CloudNativePG
-# + Barman Cloud plugin + SeaweedFS as local S3. Everything comes from deploy/vendor (pinned, checksummed).
-# Requires: docker, k3d, kubectl, openssl, jq. Usage: cell.sh up|down|status. Safe to re-run: `up` skips an
-# existing cluster and re-applies manifests (server-side apply). S3 keys are random and kept in .local/ (git-ignored).
+# Local cell lifecycle (plan/04 Step 0.3): k3d cell "local" in the starter shape (1 server, ADR-025) or the
+# reference shape (3 servers + 1 agent), the local OCI registry, and one LVM volume group per tenant node.
+#   cell.sh up [starter|reference]   create (or keep) the cell, then hand over to hack/cell-flux.sh
+#   cell.sh down                     delete the cell, its registry, volume groups and loop files
+#   cell.sh status
+# Requires: docker, k3d, kubectl, sudo rule from `hack/local-host.sh setup`. Safe to re-run: `up` keeps an
+# existing cell and only re-applies manifests; the profile is fixed when the cell is created.
 set -Eeuo pipefail
 trap 'echo "cell: failed at line $LINENO" >&2' ERR
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 vendor="${root}/deploy/vendor"
-name="starter"
-ctx="k3d-${name}"
-state="${root}/.local"
+cluster=local
+ctx="k3d-${cluster}"
+registry=dbcloud-registry
+host_tool=/usr/local/sbin/dbcloud-local-host
+export REPO="$root" LOCAL_STATE=/var/lib/dbcloud-local
 
-load_versions() {
-  local key value
-  while IFS='=' read -r key value; do
-    [[ -z "$key" || "$key" == \#* ]] && continue
-    printf -v "$key" '%s' "${value%$'\r'}"
-  done <"${root}/tools.versions"
-}
+die() { echo "cell: $*" >&2; exit 2; }
 
-# image <repo-prefix>: the digest-pinned reference from images.lock.
+# image <prefix>: digest-pinned reference from images.lock.
 image() { grep -m1 "^$1" "${vendor}/images.lock"; }
 
-kc() { kubectl --context "$ctx" "$@"; }
+# tenant_nodes <profile>: k3d container names of the nodes that carry tenants (and so need a VG + lvmd).
+tenant_nodes() {
+  case "$1" in
+    starter) echo "k3d-${cluster}-server-0" ;;
+    reference) echo "k3d-${cluster}-server-1 k3d-${cluster}-server-2 k3d-${cluster}-agent-0" ;;
+    *) die "profile must be starter or reference" ;;
+  esac
+}
+
+exists() { k3d cluster list -o json | jq -e --arg n "$cluster" '.[] | select(.name == $n)' >/dev/null; }
 
 up() {
-  (cd "$vendor" && sha256sum -c --quiet SHA256SUMS)          # refuse tampered or partial manifests
-  if ! k3d cluster list -o json | jq -e --arg n "$name" '.[] | select(.name == $n)' >/dev/null; then
-    k3d cluster create --config "${root}/deploy/local/k3d-starter.yaml" --image "$(image docker.io/rancher/k3s:)"
+  local profile="${1:-starter}" nodes
+  nodes="$(tenant_nodes "$profile")"
+  [[ -x "$host_tool" ]] || die "run once: wsl -d Ubuntu-24.04 -u root -- bash hack/local-host.sh setup"
+  (cd "$vendor" && sha256sum -c --quiet SHA256SUMS) || die "vendored files don't match deploy/vendor/SHA256SUMS"
+
+  if ! k3d registry list -o json | jq -e --arg n "k3d-${registry}" '.[] | select(.name == $n)' >/dev/null; then
+    # Bound to localhost: Flux artifacts are pushed from this PC only.
+    k3d registry create "$registry" --port 127.0.0.1:5050 --image "$(image docker.io/library/registry:)" --no-help
   fi
-  kc wait --for=condition=Ready node --all --timeout=180s
-
-  kc apply --server-side -f "${vendor}/cert-manager/${CERT_MANAGER}/cert-manager.yaml" >/dev/null
-  kc -n cert-manager rollout status deploy --timeout=300s
-  kc apply --server-side -f "${vendor}/cnpg/${CNPG}/cnpg-${CNPG}.yaml" >/dev/null
-  kc -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=300s
-  kc apply --server-side -f "${vendor}/barman-cloud/${BARMAN_PLUGIN}/manifest.yaml" >/dev/null
-  kc -n cnpg-system rollout status deploy/barman-cloud --timeout=300s
-
-  s3_keys
-  kc apply -f <(sed "s#SEAWEEDFS_IMAGE#$(image docker.io/chrislusf/seaweedfs:)#" "${root}/deploy/local/seaweedfs.yaml") >/dev/null
-  kc -n dbcloud-system create secret generic seaweedfs-s3-config --from-file=s3.json="${state}/s3.json" \
-    --dry-run=client -o yaml | kc apply -f - >/dev/null
-  kc -n dbcloud-system rollout status deploy/seaweedfs --timeout=300s
-  # Bucket for backups; `weed shell` talks to the in-process master. Re-creating an existing bucket is a no-op.
-  printf 's3.bucket.create -name dbcloud-backups\n' | kc -n dbcloud-system exec -i deploy/seaweedfs -- weed shell >/dev/null 2>&1 || true
-  echo "starter cell ready (context ${ctx})"
+  if ! exists; then
+    # shellcheck disable=SC2086 # reason: $nodes is a list of validated container names
+    sudo -n "$host_tool" lvm-up $nodes
+    K3S_IMAGE="$(image docker.io/rancher/k3s:)" k3d cluster create --config "${root}/deploy/local/k3d-${profile}.yaml"
+  else
+    echo "cell ${cluster} exists; keeping it (delete with 'cell.sh down' to change the profile)"
+  fi
+  kubectl --context "$ctx" wait --for=condition=Ready node --all --timeout=300s
+  bash "${root}/hack/cell-flux.sh"
 }
 
-# s3_keys: creates the local S3 identity once (CSPRNG, 160/320 bits) and keeps it in .local/.
-s3_keys() {
-  mkdir -p "$state" && chmod 700 "$state"
-  [[ -f "${state}/s3.env" ]] && return
-  local id secret
-  id="$(openssl rand -hex 10)"; secret="$(openssl rand -hex 20)"
-  umask 077
-  printf 'ACCESS_KEY_ID=%s\nACCESS_SECRET_KEY=%s\n' "$id" "$secret" >"${state}/s3.env"
-  jq -n --arg id "$id" --arg s "$secret" \
-    '{identities: [{name: "backup", credentials: [{accessKey: $id, secretKey: $s}], actions: ["Read", "Write", "List", "Tagging"]}]}' \
-    >"${state}/s3.json"
+down() {
+  local nodes
+  nodes="$(k3d node list -o json 2>/dev/null | jq -r --arg c "$cluster" '.[] | select(.runtimeLabels["k3d.cluster"] == $c) | .name' | grep -E 'server|agent' || true)"
+  # Registry first: while it is attached, k3d can't remove the cluster's network.
+  k3d registry delete "k3d-${registry}" 2>/dev/null || true
+  k3d cluster delete "$cluster"
+  # Remove the VGs of every possible tenant node, whichever profile ran.
+  # shellcheck disable=SC2046 # reason: fixed, validated container names
+  sudo -n "$host_tool" lvm-down $(tenant_nodes starter) $(tenant_nodes reference)
+  [[ -z "$nodes" ]] || echo "removed nodes: $(tr '\n' ' ' <<<"$nodes")"
 }
-
-down() { k3d cluster delete "$name"; }
 
 status() {
-  kc get nodes -o wide
-  kc get clusters.postgresql.cnpg.io -A 2>/dev/null || true
+  kubectl --context "$ctx" get nodes -o wide
+  kubectl --context "$ctx" get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A 2>/dev/null || true
+  kubectl --context "$ctx" get clusters.postgresql.cnpg.io -A 2>/dev/null || true
+  sudo -n "$host_tool" status
 }
 
 main() {
-  load_versions
-  case "${1:-}" in
-    up|down|status) "$1" ;;
-    *) echo "usage: cell.sh up|down|status" >&2; return 2 ;;
+  local cmd="${1:-}"
+  shift || true
+  case "$cmd" in
+    up) up "$@" ;;
+    down) down ;;
+    status) status ;;
+    *) die "usage: cell.sh up [starter|reference] | down | status" ;;
   esac
 }
 

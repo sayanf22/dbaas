@@ -40,11 +40,17 @@ have() {
   [[ "$out" == *"$2"* ]]
 }
 
+# go_built <binary> <version>: true when ~/.local/bin/<binary> was built from a module at v<version>
+# (read from the binary's embedded build info, so tools without a --version flag are detected too).
+go_built() {
+  [[ -x "${bin_dir}/$1" ]] && go version -m "${bin_dir}/$1" 2>/dev/null | awk '$1 == "mod" { print $3 }' | grep -qx "v$2"
+}
+
 # go_tool <binary> <module@version>: builds with `go install`, which checks sum.golang.org.
 go_tool() {
   local name="$1" mod="$2"
   wanted "$name" || return 0
-  if have "$name" "${mod##*@v}"; then echo "ok   $name"; return; fi
+  if go_built "$name" "${mod##*@v}" || have "$name" "${mod##*@v}"; then echo "ok   $name"; return; fi
   GOBIN="$bin_dir" go install "$mod"
   echo "new  $name ${mod##*@}"
 }
@@ -80,6 +86,8 @@ main() {
   go_tool oapi-codegen "github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v${OAPI_CODEGEN}"
   go_tool govulncheck  "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK}"
   go_tool sqlc         "github.com/sqlc-dev/sqlc/cmd/sqlc@v${SQLC}"   # cgo: needs build-essential
+  # lvmd for the local cell only (hack/local-host.sh); same app version as the pinned TopoLVM chart.
+  go_tool lvmd         "github.com/topolvm/topolvm/cmd/lvmd@v${TOPOLVM}"
 
   archive_tool flux "$FLUX" \
     "${gh}/fluxcd/flux2/releases/download/v${FLUX}/flux_${FLUX}_linux_amd64.tar.gz" \

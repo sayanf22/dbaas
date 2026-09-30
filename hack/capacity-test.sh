@@ -3,12 +3,12 @@
 # waits until all are Ready, then for each: connects through its PgBouncer with the generated `app` role,
 # writes a row, checks WAL archiving to S3; checks that tenant 1 can't reach tenant 2; prints measured memory.
 # Usage: capacity-test.sh <count 1-50> <plan> [--keep]. Requires: kubectl, psql, jq, the local cell.
-# Creates tenants t-cap000NN (idempotent); deletes them at the end unless --keep is given.
+# Creates tenants t-cap000NN (idempotent); deletes them and their local S3 backups at the end unless --keep.
 set -Eeuo pipefail
 trap 'echo "capacity-test: failed at line $LINENO" >&2' ERR
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ctx="${KUBE_CONTEXT:-k3d-starter}"
+ctx="${KUBE_CONTEXT:-k3d-local}"
 kc() { kubectl --context "$ctx" "$@"; }
 
 # probe <ns>: SQL round trip through the tenant's pooler as the tenant's own role; password via env, not args.
@@ -60,7 +60,11 @@ main() {
   if [[ "$keep" != "--keep" ]]; then
     for ns in "${refs[@]}"; do bash "${root}/hack/tenant.sh" delete "$ns" --yes >/dev/null & done
     wait
-    echo "test tenants deleted"
+    # The refs are fixed, and barman refuses to archive into a non-empty prefix, so the next run needs them
+    # gone from the local S3 too (refs are generated above, so they are safe in weed shell input).
+    printf 'fs.rm -r /buckets/dbcloud-backups/%s\n' "${refs[@]}" |
+      kc -n dbcloud-system exec -i deploy/seaweedfs -- weed shell >/dev/null
+    echo "test tenants and their backups deleted"
   fi
 }
 

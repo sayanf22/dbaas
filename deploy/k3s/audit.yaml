@@ -1,0 +1,26 @@
+# API audit policy (CIS 1.2.16, plan/01 §5.4), at /var/lib/rancher/k3s/server/audit.yaml on every server.
+# Metadata level only: who did what to which object, never request or response bodies, so Secret values
+# and customer data can't end up in the log. High-volume read-only noise is dropped first.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  # Node and controller heartbeats: millions of lines a day, no security value.
+  - level: None
+    users: ["system:kube-proxy", "system:apiserver"]
+  - level: None
+    resources:
+      - group: coordination.k8s.io
+        resources: ["leases"]
+  - level: None
+    verbs: ["get", "list", "watch"]
+    resources:
+      - group: ""
+        resources: ["events", "endpoints"]
+      - group: discovery.k8s.io
+        resources: ["endpointslices"]
+  - level: None
+    nonResourceURLs: ["/healthz*", "/livez*", "/readyz*", "/version", "/metrics"]
+  # Everything else, including every access to Secrets, at Metadata.
+  - level: Metadata

@@ -1,0 +1,11 @@
+# K3s agent configuration for growth nodes (plan/01 §5.2), installed as
+# /etc/rancher/k3s/config.yaml.d/10-dbcloud-agent.yaml. Agents run no etcd or API server, so their
+# kube-reserved is smaller than a server's (60-infrastructure.md). Per-node values come from the bootstrap.
+protect-kernel-defaults: true
+kubelet-arg:
+  - max-pods=110
+  - kube-reserved=cpu=200m,memory=512Mi
+  - system-reserved=cpu=200m,memory=512Mi
+  - eviction-hard=memory.available<100Mi
+  - streaming-connection-idle-timeout=5m
+  - tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305

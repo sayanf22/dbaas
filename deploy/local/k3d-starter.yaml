@@ -1,30 +1,42 @@
-# Local copy of the starter cell (ADR-025): one K3s server with embedded etcd, like the single starter VM.
-# `--cluster-init` matters: the cell starts on etcd, so two more servers can join later without a rebuild
-# (https://docs.k3s.io/datastore/ha-embedded). The image tag is overridden with the digest from
-# deploy/vendor/images.lock by hack/cell.sh.
+# Local cell, starter shape (ADR-025): one K3s server with embedded etcd (`cluster-init`), which is also the
+# tenant node, like the single starter VM. Created by hack/cell.sh, which sets REPO, LOCAL_STATE and
+# K3S_IMAGE (digest from deploy/vendor/images.lock); k3d expands ${VAR} before parsing this file.
 apiVersion: k3d.io/v1alpha5
 kind: Simple
 metadata:
-  name: starter
+  name: local
 servers: 1
 agents: 0
-image: rancher/k3s:v1.36.4-k3s1
+image: ${K3S_IMAGE}
+registries:
+  use: [k3d-dbcloud-registry:5000]      # local OCI registry for Flux artifacts (hack/cell.sh creates it)
+volumes:
+  # The production K3s configuration (deploy/k3s), then the local-only overrides.
+  - volume: ${REPO}/deploy/k3s/server.yaml:/etc/rancher/k3s/config.yaml.d/10-dbcloud-server.yaml
+    nodeFilters: [server:*]
+  - volume: ${REPO}/deploy/local/k3s/90-local-server.yaml:/etc/rancher/k3s/config.yaml.d/90-local.yaml
+    nodeFilters: [server:*]
+  - volume: ${REPO}/deploy/k3s/psa.yaml:/var/lib/rancher/k3s/server/psa.yaml
+    nodeFilters: [server:*]
+  - volume: ${REPO}/deploy/k3s/audit.yaml:/var/lib/rancher/k3s/server/audit.yaml
+    nodeFilters: [server:*]
+  # TopoLVM on the tenant node: host block devices and the node's lvmd socket (hack/local-host.sh).
+  - volume: /dev:/dev
+    nodeFilters: [server:0]
+  - volume: ${LOCAL_STATE}/run/k3d-local-server-0:/run/topolvm
+    nodeFilters: [server:0]
 options:
   k3d:
     wait: true
-    timeout: 180s
-    disableLoadbalancer: true        # no serverlb container: one server, and production has no LB either
+    timeout: 300s
+    disableLoadbalancer: true           # one server; production has no load balancer either
   k3s:
     extraArgs:
-      - arg: --cluster-init          # embedded etcd, same datastore as production
+      - arg: --cluster-init             # start on embedded etcd so servers can join later (Step 1.13)
         nodeFilters: [server:0]
-      - arg: --disable=traefik       # HTTP enters through Cloudflare Tunnel, not an in-cluster ingress
+    nodeLabels:
+      - label: dbcloud.io/pool=tenant
         nodeFilters: [server:0]
-      - arg: --disable=servicelb     # Postgres enters through pg-gateway on hostPort 5432
-        nodeFilters: [server:0]
-      - arg: --secrets-encryption    # Secrets encrypted at rest, as on the VMs
-        nodeFilters: [server:0]
-      # local-path storage stays enabled here; production uses TopoLVM (local-path ignores PVC sizes).
   kubeconfig:
     updateDefaultKubeconfig: true
     switchCurrentContext: true

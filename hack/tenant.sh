@@ -11,7 +11,7 @@ set -Eeuo pipefail
 trap 'echo "tenant: failed at line $LINENO" >&2' ERR
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ctx="${KUBE_CONTEXT:-k3d-starter}"
+ctx="${KUBE_CONTEXT:-k3d-local}"
 # shellcheck disable=SC2016 # reason: the literal ${NAME} list is envsubst's input, it must not expand here
 vars='${TENANT} ${PLAN} ${STORAGE} ${S3_BUCKET} ${S3_ENDPOINT} ${PG_IMAGE} ${PGB_IMAGE} ${PG_CPU_REQ} ${PG_CPU_LIM} ${PG_MEM} ${MAX_CONNECTIONS} ${SHARED_BUFFERS} ${ARCHIVE_TIMEOUT} ${POOL_MAX_CLIENTS} ${POOL_SIZE} ${SIDECAR_CPU_REQ} ${SIDECAR_CPU_LIM} ${SIDECAR_MEM} ${PGB_CPU_REQ} ${PGB_CPU_LIM} ${PGB_MEM}'
 

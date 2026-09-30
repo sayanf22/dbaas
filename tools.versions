@@ -20,6 +20,19 @@ BARMAN_PLUGIN=0.15.0
 CERT_MANAGER=1.21.2
 # renovate: datasource=github-releases depName=topolvm/topolvm extractVersion=^topolvm-chart-v(?<version>.+)$
 TOPOLVM_CHART=17.2.0
+# App version shipped by TOPOLVM_CHART (chart appVersion); lvmd for the local cell is built at this tag.
+TOPOLVM=0.41.1
+# renovate: datasource=helm depName=victoria-metrics-single registryUrl=https://victoriametrics.github.io/helm-charts
+VICTORIA_METRICS_CHART=0.48.0
+# App version of VICTORIA_METRICS_CHART (chart appVersion).
+VICTORIA_METRICS=1.153.0
+# Flux controller versions shipped by FLUX (from `flux install --export`).
+FLUX_SOURCE_CONTROLLER=1.9.5
+FLUX_KUSTOMIZE_CONTROLLER=1.9.5
+FLUX_HELM_CONTROLLER=1.6.4
+# Local OCI registry for Flux artifacts (local cell only).
+# renovate: datasource=docker depName=docker.io/library/registry
+REGISTRY=3.1.2
 # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
 POSTGRES=18.6
 # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/pgbouncer

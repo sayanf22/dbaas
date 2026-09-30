@@ -18,8 +18,9 @@ linters:
     gosec:
       config:
         global:
-          nosec: false
-          show-ignored: true
+          nosec: false         # honour `// #nosec G### -- reason` annotations
+          # show-ignored stays at its default (false): when true, golangci-lint reports every #nosec-suppressed
+          # finding as a failure, so a justified suppression could never pass.
           audit: true
     revive:
       rules:

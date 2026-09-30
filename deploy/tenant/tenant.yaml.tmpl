@@ -100,7 +100,11 @@ spec:
       secretAccessKey: {name: backup-s3, key: ACCESS_SECRET_KEY}
     wal:
       compression: zstd
-    # data: no compression; base backups stay uncompressed for R2 multipart (03 §8, spike S4)
+    # No data compression: base backups stay uncompressed for R2 multipart (03 §8, spike S4).
+    # One upload worker: the default two raised the sidecar's peak from ~145 to ~177 MiB for the same
+    # duration, because the 200m CPU limit, not upload parallelism, bounds throughput (measured 2026-09-30).
+    data:
+      jobs: 1
   instanceSidecarConfiguration:
     retentionPolicyIntervalSeconds: 21600                # 6 h: keeps R2 LIST operations low (03 §8)
     resources:
@@ -140,8 +144,12 @@ spec:
   resources:
     requests: {cpu: ${PG_CPU_REQ}, memory: ${PG_MEM}}
     limits: {cpu: ${PG_CPU_LIM}, memory: ${PG_MEM}}
+  # Tenant pods run only on tenant nodes, never on cp-1 (40-kubernetes-operator.md).
+  affinity:
+    nodeSelector: {dbcloud.io/pool: tenant}
   storage:
     size: ${STORAGE}
+    storageClass: tenant-local           # TopoLVM: the plan size is a hard limit (plan/01 §7.1)
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Pooler
@@ -159,6 +167,7 @@ spec:
       default_pool_size: "${POOL_SIZE}"
   template:
     spec:
+      nodeSelector: {dbcloud.io/pool: tenant}
       containers:
         - name: pgbouncer
           image: ${PGB_IMAGE}

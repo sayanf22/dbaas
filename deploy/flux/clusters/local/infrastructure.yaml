@@ -1,0 +1,66 @@
+# Flux Kustomizations of the local cell. Paths are relative to the root of the OCI artifact, which is the
+# repository's deploy/ directory (pushed by hack/cell.sh). `wait: true` makes each layer healthy before the
+# next starts; `prune: true` removes objects deleted from git.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cert-manager
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef: {kind: OCIRepository, name: dbcloud}
+  path: ./flux/infrastructure/cert-manager
+  prune: true
+  wait: true
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: controllers
+  namespace: flux-system
+spec:
+  dependsOn: [{name: cert-manager}]
+  interval: 10m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef: {kind: OCIRepository, name: dbcloud}
+  path: ./flux/infrastructure/controllers
+  prune: true
+  wait: true
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: services
+  namespace: flux-system
+spec:
+  dependsOn: [{name: controllers}]
+  interval: 10m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef: {kind: OCIRepository, name: dbcloud}
+  path: ./flux/infrastructure/services
+  prune: true
+  wait: true
+---
+# Local-only S3 (stand-in for R2). Its S3 identity is a SOPS-encrypted Secret, decrypted here with the cell's
+# age key from the `sops-age` Secret (60-infrastructure.md "Secrets").
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: local-s3
+  namespace: flux-system
+spec:
+  dependsOn: [{name: controllers}]
+  interval: 10m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef: {kind: OCIRepository, name: dbcloud}
+  path: ./local/s3
+  prune: true
+  wait: true
+  decryption:
+    provider: sops
+    secretRef: {name: sops-age}

@@ -1,0 +1,74 @@
+# TopoLVM: per-tenant thick logical volumes in the node's `tenantvg` (plan/01 §7.1). lvmd runs on the host
+# (node bootstrap in production, hack/local-host.sh locally), so the chart's own lvmd is off and the node
+# plugin talks to /run/topolvm/lvmd.sock. The topolvm-system namespace is PSA-exempt (deploy/k3s/psa.yaml):
+# the node plugin must be privileged to create device nodes and mount volumes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: topolvm-system
+  labels:
+    # The chart's webhook skips its own namespace by this label.
+    topolvm.io/webhook: ignore
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: topolvm
+  namespace: topolvm-system
+spec:
+  interval: 24h
+  url: https://topolvm.github.io/topolvm
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: topolvm
+  namespace: topolvm-system
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: topolvm
+      version: 17.2.0            # tools.versions TOPOLVM_CHART; appVersion 0.41.1
+      sourceRef: {kind: HelmRepository, name: topolvm}
+  install:
+    crds: CreateReplace
+    remediation: {retries: 3}
+  upgrade:
+    crds: CreateReplace
+    remediation: {retries: 3}
+  values:
+    image:
+      # Same digest as the chart default and deploy/vendor/images.lock; pinned here so a chart bump can't
+      # change the image silently.
+      reference: 0.41.1@sha256:70548dbe0c6addcccf79a557f29e95db2e6dc2cba2102988c91f30086004d0fc
+    lvmd:
+      managed: false             # lvmd runs on the host, one per tenant node
+    controller:
+      # One replica in the local cell; the production overlay (Step 1.3) sets 2 with leader election.
+      replicaCount: 1
+      nodeSelector: {dbcloud.io/pool: tenant}
+    node:
+      # Only tenant nodes have a tenantvg and an lvmd.
+      nodeSelector: {dbcloud.io/pool: tenant}
+    snapshot:
+      # Backups go through Barman to object storage, not CSI snapshots; K3s ships no snapshot CRDs.
+      enabled: false
+    storageClasses:
+      - name: tenant-local
+        storageClass:
+          fsType: xfs
+          isDefaultClass: false
+          volumeBindingMode: WaitForFirstConsumer   # pick the node first, then carve the volume there
+          allowVolumeExpansion: true                # online growth for plan upgrades
+          reclaimPolicy: Delete                     # PVCs are deleted only by the purge path (40-kubernetes-operator.md)
+          additionalParameters:
+            topolvm.io/device-class: tenant
+    # Measured idle usage + headroom; memory limit = request, no CPU limit (60-infrastructure.md).
+    resources:
+      topolvm_node: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 64Mi}}
+      csi_registrar: {requests: {cpu: 5m, memory: 32Mi}, limits: {memory: 32Mi}}
+      liveness_probe: {requests: {cpu: 5m, memory: 32Mi}, limits: {memory: 32Mi}}
+      topolvm_controller: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 64Mi}}
+      csi_provisioner: {requests: {cpu: 5m, memory: 48Mi}, limits: {memory: 48Mi}}
+      csi_resizer: {requests: {cpu: 5m, memory: 48Mi}, limits: {memory: 48Mi}}

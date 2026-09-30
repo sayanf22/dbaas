@@ -3,6 +3,8 @@
 
 # Local-only state: kubeconfigs, generated credentials, test output.
 /.local/
+# Per-developer local S3 identity, SOPS-encrypted by hack/cell-flux.sh (never committed).
+/deploy/local/s3/secret.sops.yaml
 *.kubeconfig
 *.age.key
 *.agekey
