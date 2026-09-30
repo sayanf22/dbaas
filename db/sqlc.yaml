@@ -1,0 +1,25 @@
+# sqlc configuration (35-sql.md, 20-go.md "queries only via sqlc"). Queries in db/queries/*.sql are compiled
+# against the goose migrations, so a query that doesn't match the schema fails `task gen` and CI.
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: queries
+    gen:
+      go:
+        package: queries
+        out: ../internal/store/queries
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        emit_result_struct_pointers: false
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type:
+              type: time.Time
+              pointer: true

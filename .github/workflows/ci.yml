@@ -39,7 +39,7 @@ jobs:
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
-            go: ['go.mod', 'go.sum', 'cmd/**', 'internal/**', 'build/go.Dockerfile', '.golangci.yml', '.github/workflows/ci.yml']
+            go: ['go.mod', 'go.sum', 'cmd/**', 'internal/**', 'db/**', 'api/**', 'build/go.Dockerfile', '.golangci.yml', '.github/workflows/ci.yml']
             rust: ['gateway/**', 'tools.versions', '.github/workflows/ci.yml']
             web: ['web/**', 'package.json', 'pnpm-workspace.yaml', 'pnpm-lock.yaml', '.github/workflows/ci.yml']
             infra: ['deploy/**', 'hack/**', 'tools.versions', '.github/workflows/ci.yml']
@@ -50,6 +50,18 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # Throwaway Postgres for the admin-DB tests (migrations, schema rules, idempotency store). CI never
+    # connects to Supabase (70-ci.md); 17.6 matches the local Supabase stack's server version.
+    services:
+      postgres:
+        image: docker.io/library/postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+        env:
+          POSTGRES_PASSWORD: ci-only-throwaway   # container lives for this job only, bound to localhost
+        ports: ["127.0.0.1:5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      ADMIN_DB_TEST_URL: postgres://postgres:ci-only-throwaway@127.0.0.1:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,11 +70,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: generated code is up to date (sqlc, oapi-codegen)
+        run: |
+          go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 -f db/sqlc.yaml generate
+          go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.8.0 -config api/oapi-codegen.yaml api/openapi.yaml
+          git diff --exit-code -- internal/store/queries internal/api
+      - name: OpenAPI lint (vacuum, errors fail)
+        run: go run github.com/daveshanley/vacuum@v0.30.6 lint -r api/vacuum-ruleset.yaml -n error api/openapi.yaml
       - name: golangci-lint (gofmt, govet, gosec, …)
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.14.0
-      - name: test (race detector)
+      - name: test (race detector; admin-DB tests run against the service container)
         run: go test -race -count=1 ./...
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...

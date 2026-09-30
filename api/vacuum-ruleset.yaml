@@ -1,0 +1,9 @@
+# OpenAPI lint rules for api/openapi.yaml (vacuum, run in CI). Starts from vacuum's recommended ruleset and
+# turns off only the style rules that contradict decisions in the plan; every correctness rule stays on and
+# any error fails the build.
+extends: [[vacuum:oas, recommended]]
+rules:
+  # JSON fields are snake_case across the API, the admin schema and the SDKs (plan/04 §9-§10).
+  camel-case-properties: off
+  # Examples are added per endpoint as each handler is implemented (Step 0.6), not as placeholders now.
+  oas3-missing-example: off

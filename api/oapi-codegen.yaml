@@ -1,0 +1,12 @@
+# oapi-codegen configuration (plan/04 Step 0.2, 20-go.md "handlers are generated from OpenAPI"):
+# models + a strict net/http server interface for control-api, plus the embedded spec for request
+# validation middleware. Regenerate with `task gen`; the output is never edited by hand.
+package: api
+output: internal/api/api.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: false

@@ -1,0 +1,1616 @@
+# dbcloud API contract (plan/04 §10, plan/01 §10.1). Every API change starts here (10-engineering §7):
+# /v1 changes are additive only; errors are RFC 9457 problem details; asynchronous changes return
+# 202 + an Operation; every mutating public request carries an Idempotency-Key; request bodies reject
+# unknown fields and bound every string and list (15-security §5). Go server types are generated with
+# oapi-codegen (api/oapi-codegen.yaml); api/contract_test.go enforces the rules above on this file.
+openapi: 3.1.0
+info:
+  title: dbcloud API
+  version: 0.2.0
+  summary: Managed PostgreSQL databases, one isolated Postgres instance per database.
+  description: >-
+    Public API of dbcloud (/v1) and the internal cell-agent API (/internal/v1). Each database is its own
+    PostgreSQL instance in its own namespace, with its own storage, credentials, pooler and backups.
+    Changes are asynchronous: they return 202 with an Operation to poll. Mutating requests need an
+    Idempotency-Key. Errors are RFC 9457 problem details.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: https://api.example.com
+    description: Production (behind Cloudflare Tunnel)
+security:
+  - bearer: []
+tags:
+  - {name: plans, description: "Plan catalog"}
+  - {name: orgs, description: "Organizations, members and API keys"}
+  - {name: databases, description: "Customer databases and their lifecycle"}
+  - {name: operations, description: "Asynchronous operations"}
+  - {name: mcp, description: "MCP grants and human approvals"}
+  - {name: billing, description: "Subscriptions and invoices"}
+  - {name: webhooks, description: "Inbound provider webhooks"}
+  - {name: internal, description: "Cell agent API (mTLS, not public)"}
+
+paths:
+  /v1/plans:
+    get:
+      operationId: listPlans
+      tags: [plans]
+      summary: List the active plans and their prices
+      security: []
+      responses:
+        "200":
+          description: Active plans
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 50, items: {$ref: "#/components/schemas/Plan"}}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/orgs:
+    get:
+      operationId: listOrgs
+      tags: [orgs]
+      summary: List the organizations the caller belongs to
+      parameters:
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of organizations
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/Org"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    post:
+      operationId: createOrg
+      tags: [orgs]
+      summary: Create an organization; the caller becomes its owner
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OrgCreate"}
+      responses:
+        "201":
+          description: Organization created
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Org"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/orgs/{orgId}:
+    parameters:
+      - {$ref: "#/components/parameters/OrgId"}
+    get:
+      operationId: getOrg
+      tags: [orgs]
+      summary: Get an organization
+      responses:
+        "200":
+          description: The organization
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Org"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/orgs/{orgId}/members:
+    parameters:
+      - {$ref: "#/components/parameters/OrgId"}
+    get:
+      operationId: listMembers
+      tags: [orgs]
+      summary: List the members of an organization
+      parameters:
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of members
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/Member"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    post:
+      operationId: addMember
+      tags: [orgs]
+      summary: Add an existing user to the organization by email
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/MemberAdd"}
+      responses:
+        "201":
+          description: Member added
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Member"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/orgs/{orgId}/members/{userId}:
+    parameters:
+      - {$ref: "#/components/parameters/OrgId"}
+      - {$ref: "#/components/parameters/UserId"}
+    delete:
+      operationId: removeMember
+      tags: [orgs]
+      summary: Remove a member (the last owner can't be removed)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Member removed}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/orgs/{orgId}/api-keys:
+    parameters:
+      - {$ref: "#/components/parameters/OrgId"}
+    get:
+      operationId: listApiKeys
+      tags: [orgs]
+      summary: List API keys (never their secrets)
+      parameters:
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/ApiKey"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    post:
+      operationId: createApiKey
+      tags: [orgs]
+      summary: Create an API key; the secret is returned once and never again
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ApiKeyCreate"}
+      responses:
+        "201":
+          description: API key created
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ApiKeyCreated"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/orgs/{orgId}/api-keys/{keyId}:
+    parameters:
+      - {$ref: "#/components/parameters/OrgId"}
+      - {$ref: "#/components/parameters/KeyId"}
+    delete:
+      operationId: revokeApiKey
+      tags: [orgs]
+      summary: Revoke an API key immediately
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Key revoked}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases:
+    get:
+      operationId: listDatabases
+      tags: [databases]
+      summary: List the databases of an organization
+      parameters:
+        - {$ref: "#/components/parameters/OrgIdQuery"}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of databases
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/Database"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    post:
+      operationId: createDatabase
+      tags: [databases]
+      summary: Create a database (its own Postgres instance); waitlisted when capacity is full
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DatabaseCreate"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    get:
+      operationId: getDatabase
+      tags: [databases]
+      summary: Get a database
+      responses:
+        "200":
+          description: The database
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Database"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+    delete:
+      operationId: deleteDatabase
+      tags: [databases]
+      summary: Staged delete; cancel the returned operation to undo it within the grace period
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/purge:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: purgeDatabase
+      tags: [databases]
+      summary: Irreversibly erase a deleted database and its backups; needs a second authorization
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PurgeRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/scale:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: scaleDatabase
+      tags: [databases]
+      summary: Change the plan (single-instance plans restart once, announced)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ScaleRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/storage:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: expandStorage
+      tags: [databases]
+      summary: Grow storage online (never shrinks)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StorageRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/backup:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: backupDatabase
+      tags: [databases]
+      summary: Take an on-demand base backup
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/restore:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: restoreDatabase
+      tags: [databases]
+      summary: Point-in-time restore into a new database (the source keeps running)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RestoreRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/export:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: exportDatabase
+      tags: [databases]
+      summary: Logical export (pg_dump -Fc), delivered as a short-lived signed URL on the operation
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/migrate:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: migrateDatabase
+      tags: [databases]
+      summary: Import from an external Postgres (dump or logical replication)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/MigrateRequest"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "422": {$ref: "#/components/responses/UnprocessableContent"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/credentials:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    get:
+      operationId: getCredentials
+      tags: [databases]
+      summary: Reveal the connection details including the password (audited, never cached)
+      responses:
+        "200":
+          description: Current credentials
+          headers:
+            Cache-Control: {$ref: "#/components/headers/NoStore"}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Credentials"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/credentials/rotate:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: rotateCredentials
+      tags: [databases]
+      summary: Rotate the password (create-before-revoke)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/suspend:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: suspendDatabase
+      tags: [databases]
+      summary: Stop accepting connections (clients get SQLSTATE 57P03); data is kept
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/resume:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    post:
+      operationId: resumeDatabase
+      tags: [databases]
+      summary: Accept connections again after a suspend
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/metrics:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    get:
+      operationId: getMetrics
+      tags: [databases]
+      summary: Usage and performance series for this database only
+      parameters:
+        - {name: range, in: query, required: false, schema: {type: string, enum: [1h, 24h, 7d, 30d], default: 24h}}
+      responses:
+        "200":
+          description: Metric series
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Metrics"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/logs:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    get:
+      operationId: getLogs
+      tags: [databases]
+      summary: Recent Postgres log lines of this database only
+      parameters:
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of log lines, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/LogLine"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/health:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    get:
+      operationId: getHealth
+      tags: [databases]
+      summary: Current health, as last reported by the cell
+      responses:
+        "200":
+          description: Health
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/databases/{databaseId}/backups:
+    parameters:
+      - {$ref: "#/components/parameters/DatabaseId"}
+    get:
+      operationId: listBackups
+      tags: [databases]
+      summary: Base backups and the current point-in-time recovery window
+      parameters:
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of backups
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, recovery_window]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/Backup"}}
+                  recovery_window: {$ref: "#/components/schemas/RecoveryWindow"}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/operations:
+    get:
+      operationId: listOperations
+      tags: [operations]
+      summary: List the operations of an organization, newest first
+      parameters:
+        - {$ref: "#/components/parameters/OrgIdQuery"}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of operations
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/Operation"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/operations/{operationId}:
+    parameters:
+      - {$ref: "#/components/parameters/OperationId"}
+    get:
+      operationId: getOperation
+      tags: [operations]
+      summary: Get an operation and its progress events
+      responses:
+        "200":
+          description: The operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Operation"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/operations/{operationId}/cancel:
+    parameters:
+      - {$ref: "#/components/parameters/OperationId"}
+    post:
+      operationId: cancelOperation
+      tags: [operations]
+      summary: Ask to cancel an operation (a staged delete is undone this way)
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "202": {$ref: "#/components/responses/Accepted"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/mcp/grants:
+    get:
+      operationId: listMcpGrants
+      tags: [mcp]
+      summary: List the MCP client grants of an organization
+      parameters:
+        - {$ref: "#/components/parameters/OrgIdQuery"}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of grants
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/McpGrant"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/mcp/grants/{grantId}:
+    parameters:
+      - {$ref: "#/components/parameters/GrantId"}
+    delete:
+      operationId: revokeMcpGrant
+      tags: [mcp]
+      summary: Revoke an MCP grant and all tokens issued under it
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "204": {description: Grant revoked}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/approvals/{approvalId}:
+    parameters:
+      - {$ref: "#/components/parameters/ApprovalId"}
+    get:
+      operationId: getApproval
+      tags: [mcp]
+      summary: Show exactly what an MCP client asks to run
+      responses:
+        "200":
+          description: The pending approval
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Approval"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/approvals/{approvalId}/approve:
+    parameters:
+      - {$ref: "#/components/parameters/ApprovalId"}
+    post:
+      operationId: approveApproval
+      tags: [mcp]
+      summary: Approve one exact MCP write, once
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Approval"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/approvals/{approvalId}/deny:
+    parameters:
+      - {$ref: "#/components/parameters/ApprovalId"}
+    post:
+      operationId: denyApproval
+      tags: [mcp]
+      summary: Deny an MCP write
+      parameters:
+        - {$ref: "#/components/parameters/IdempotencyKey"}
+      responses:
+        "200":
+          description: Denied
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Approval"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/billing/subscriptions:
+    get:
+      operationId: listSubscriptions
+      tags: [billing]
+      summary: List the subscriptions of an organization
+      parameters:
+        - {$ref: "#/components/parameters/OrgIdQuery"}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of subscriptions
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/Subscription"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/billing/invoices:
+    get:
+      operationId: listInvoices
+      tags: [billing]
+      summary: List the GST invoices of an organization
+      parameters:
+        - {$ref: "#/components/parameters/OrgIdQuery"}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of invoices
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/Invoice"}}
+                  next_cursor: {$ref: "#/components/schemas/NextCursor"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /v1/webhooks/razorpay:
+    post:
+      operationId: razorpayWebhook
+      tags: [webhooks]
+      summary: Razorpay events; HMAC-SHA256 over the raw body is verified before parsing, then deduplicated by event id
+      security: []
+      parameters:
+        - name: X-Razorpay-Signature
+          in: header
+          required: true
+          schema: {type: string, pattern: "^[0-9a-f]{64}$"}
+        - name: X-Razorpay-Event-Id
+          in: header
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 100}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              description: Razorpay's event envelope; parsed only after the signature check.
+              type: object
+      responses:
+        "200": {description: Event accepted or already processed}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /internal/v1/cells/{cellId}/desired:
+    parameters:
+      - {$ref: "#/components/parameters/CellId"}
+    get:
+      operationId: getDesiredState
+      tags: [internal]
+      summary: Long-poll the desired TenantDatabase specs of a cell (cluster-agent only)
+      security:
+        - agentMTLS: []
+      parameters:
+        - name: since_generation
+          in: query
+          required: false
+          description: Return immediately only if the cell's desired generation is newer than this.
+          schema: {type: integer, format: int64, minimum: 0}
+        - name: wait_seconds
+          in: query
+          required: false
+          description: Long-poll time; stays below Cloudflare's 100 s proxy timeout.
+          schema: {type: integer, minimum: 0, maximum: 55, default: 30}
+      responses:
+        "200":
+          description: The desired state
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DesiredState"}
+        "304": {description: No change within wait_seconds}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /internal/v1/cells/{cellId}/status:
+    parameters:
+      - {$ref: "#/components/parameters/CellId"}
+    post:
+      operationId: reportStatus
+      tags: [internal]
+      summary: Report observed TenantDatabase status (idempotent by generation)
+      security:
+        - agentMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/StatusReport"}
+      responses:
+        "204": {description: Accepted}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /internal/v1/cells/{cellId}/capacity:
+    parameters:
+      - {$ref: "#/components/parameters/CellId"}
+    post:
+      operationId: reportCapacity
+      tags: [internal]
+      summary: Report per-node capacity (idempotent by taken_at)
+      security:
+        - agentMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CapacityReport"}
+      responses:
+        "204": {description: Accepted}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+  /internal/v1/cells/{cellId}/events:
+    parameters:
+      - {$ref: "#/components/parameters/CellId"}
+    post:
+      operationId: reportEvents
+      tags: [internal]
+      summary: Report tenant events (backups, failures, maintenance); idempotent by event id
+      security:
+        - agentMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/EventReport"}
+      responses:
+        "204": {description: Accepted}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "403": {$ref: "#/components/responses/Forbidden"}
+        "503": {$ref: "#/components/responses/ServiceUnavailable"}
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: A Supabase Auth access token (ES256 JWT) or an organization API key (dbc_…).
+    agentMTLS:
+      type: mutualTLS
+      description: Cell agent client certificate; its fingerprint must match the cell's registered one.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >-
+        Client-chosen key, scoped to the authenticated caller. The first response is replayed for 24 h with
+        the header Idempotent-Replayed: true. Reusing a key with a different request returns 422; a key whose
+        request is still running returns 409 with Retry-After. A response that carried a one-time secret
+        (Cache-Control: no-store) is never stored, so its replay returns 409 secret-not-replayable.
+      schema: {type: string, minLength: 8, maxLength: 255, pattern: "^[\\x21-\\x7e]+$"}
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque keyset cursor from next_cursor.
+      schema: {type: string, maxLength: 512}
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    OrgId:
+      name: orgId
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    OrgIdQuery:
+      name: org_id
+      in: query
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    KeyId:
+      name: keyId
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    DatabaseId:
+      name: databaseId
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    OperationId:
+      name: operationId
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    GrantId:
+      name: grantId
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    ApprovalId:
+      name: approvalId
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/UUID"}
+    CellId:
+      name: cellId
+      in: path
+      required: true
+      schema: {type: string, pattern: "^c[0-9]{1,3}$"}
+
+  headers:
+    NoStore:
+      description: Secrets in this response must not be cached anywhere.
+      schema: {type: string, const: no-store}
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema: {type: integer, minimum: 1, maximum: 3600}
+    OperationLocation:
+      description: URL of the operation to poll.
+      schema: {type: string, maxLength: 200}
+
+  responses:
+    Accepted:
+      description: Accepted; poll the operation until it reaches a terminal state
+      headers:
+        Location: {$ref: "#/components/headers/OperationLocation"}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Operation"}
+    BadRequest:
+      description: Malformed request, unknown field or failed validation
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    Unauthorized:
+      description: Missing, expired or invalid credentials
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    Forbidden:
+      description: The caller may not do this in this organization
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    NotFound:
+      description: No such object visible to the caller
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    Conflict:
+      description: The object's current state doesn't allow this, or another operation is running
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    UnprocessableContent:
+      description: Valid syntax but not allowed (plan entitlement, Idempotency-Key reused with another request)
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    TooManyRequests:
+      description: Rate limit reached
+      headers:
+        Retry-After: {$ref: "#/components/headers/RetryAfter"}
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+    ServiceUnavailable:
+      description: A dependency is down or the service is shedding load; running databases are unaffected
+      headers:
+        Retry-After: {$ref: "#/components/headers/RetryAfter"}
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+
+  schemas:
+    UUID:
+      type: string
+      format: uuid
+      maxLength: 36
+    Timestamp:
+      type: string
+      format: date-time
+      maxLength: 40
+    NextCursor:
+      description: Cursor for the next page; absent on the last page.
+      type: string
+      maxLength: 512
+    Problem:
+      description: RFC 9457 problem details. `detail` never contains secrets or internal errors.
+      type: object
+      additionalProperties: false
+      required: [type, title, status]
+      properties:
+        type: {type: string, format: uri-reference, maxLength: 200, examples: ["/problems/plan-limit"], description: "Relative reference to the problem's documentation page (RFC 9457 §3.1.1)."}
+        title: {type: string, maxLength: 200}
+        status: {type: integer, minimum: 400, maximum: 599}
+        detail: {type: string, maxLength: 2000}
+        instance: {type: string, maxLength: 200}
+        request_id: {type: string, maxLength: 64}
+        errors:
+          description: Field-level validation errors.
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, message]
+            properties:
+              field: {type: string, maxLength: 200}
+              message: {type: string, maxLength: 500}
+
+    PlanID:
+      type: string
+      enum: [base, plus, premium]
+    Plan:
+      type: object
+      additionalProperties: false
+      required: [id, name, cpu_guaranteed_m, cpu_burst_m, memory_mi, storage_gb, max_connections, pooled_clients, pitr_days, price_paise, currency]
+      properties:
+        id: {$ref: "#/components/schemas/PlanID"}
+        name: {type: string, maxLength: 60}
+        cpu_guaranteed_m: {type: integer, minimum: 1, description: "Guaranteed CPU in millicores (100 = 0.1 vCPU)."}
+        cpu_burst_m: {type: integer, minimum: 1}
+        memory_mi: {type: integer, minimum: 1}
+        storage_gb: {type: integer, minimum: 1}
+        max_connections: {type: integer, minimum: 1}
+        pooled_clients: {type: integer, minimum: 1}
+        pitr_days: {type: integer, minimum: 1}
+        price_paise: {type: integer, format: int64, minimum: 0, description: "Monthly price excluding GST, in paise."}
+        currency: {type: string, const: INR}
+
+    OrgRole:
+      type: string
+      enum: [owner, admin, developer, viewer]
+    Org:
+      type: object
+      additionalProperties: false
+      required: [id, name, slug, billing_state, created_at]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        name: {type: string, minLength: 1, maxLength: 100}
+        slug: {type: string, pattern: "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$", maxLength: 40}
+        billing_state: {type: string, enum: [active, past_due, suspended, closed]}
+        gstin: {type: string, pattern: "^[0-9]{2}[A-Z0-9]{10}[0-9][A-Z][0-9A-Z]$", maxLength: 15}
+        created_at: {$ref: "#/components/schemas/Timestamp"}
+    OrgCreate:
+      type: object
+      additionalProperties: false
+      required: [name, slug]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        slug: {type: string, pattern: "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$", maxLength: 40}
+        gstin: {type: string, pattern: "^[0-9]{2}[A-Z0-9]{10}[0-9][A-Z][0-9A-Z]$", maxLength: 15}
+    Member:
+      type: object
+      additionalProperties: false
+      required: [user_id, email, role, created_at]
+      properties:
+        user_id: {$ref: "#/components/schemas/UUID"}
+        email: {type: string, format: email, maxLength: 320}
+        role: {$ref: "#/components/schemas/OrgRole"}
+        created_at: {$ref: "#/components/schemas/Timestamp"}
+    MemberAdd:
+      type: object
+      additionalProperties: false
+      required: [email, role]
+      properties:
+        email: {type: string, format: email, maxLength: 320}
+        role: {$ref: "#/components/schemas/OrgRole"}
+    ApiKeyScope:
+      type: string
+      enum: [databases:read, databases:write, operations:read, billing:read]
+    ApiKey:
+      type: object
+      additionalProperties: false
+      required: [id, name, prefix, scopes, created_at]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        name: {type: string, maxLength: 100}
+        prefix: {type: string, pattern: "^dbc_[a-z2-7]{12}$", maxLength: 16}
+        scopes: {type: array, maxItems: 10, uniqueItems: true, items: {$ref: "#/components/schemas/ApiKeyScope"}}
+        created_at: {$ref: "#/components/schemas/Timestamp"}
+        expires_at: {$ref: "#/components/schemas/Timestamp"}
+        revoked_at: {$ref: "#/components/schemas/Timestamp"}
+        last_used_at: {$ref: "#/components/schemas/Timestamp"}
+    ApiKeyCreate:
+      type: object
+      additionalProperties: false
+      required: [name, scopes]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        scopes: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {$ref: "#/components/schemas/ApiKeyScope"}}
+        expires_in_days: {type: integer, minimum: 1, maximum: 365}
+    ApiKeyCreated:
+      type: object
+      additionalProperties: false
+      required: [key, secret]
+      properties:
+        key: {$ref: "#/components/schemas/ApiKey"}
+        secret: {type: string, maxLength: 128, description: "The full key; shown once, stored only as an argon2id hash."}
+
+    DatabaseState:
+      type: string
+      enum: [waitlisted, provisioning, available, updating, suspended, deletion_pending, deleted, failed]
+    Database:
+      type: object
+      additionalProperties: false
+      required: [id, org_id, ref, name, plan, state, postgres_major, created_at]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        org_id: {$ref: "#/components/schemas/UUID"}
+        ref: {type: string, pattern: "^t-[a-z2-7]{8}$", maxLength: 10, description: "Public name; part of the hostnames."}
+        name: {type: string, maxLength: 63}
+        plan: {$ref: "#/components/schemas/PlanID"}
+        state: {$ref: "#/components/schemas/DatabaseState"}
+        postgres_major: {type: integer, minimum: 16, maximum: 30}
+        storage_gb: {type: integer, minimum: 1}
+        hostnames:
+          type: object
+          additionalProperties: false
+          required: [pooled, direct]
+          properties:
+            pooled: {type: string, maxLength: 253}
+            direct: {type: string, maxLength: 253}
+        allowed_cidrs: {type: array, maxItems: 50, items: {type: string, maxLength: 43}}
+        created_at: {$ref: "#/components/schemas/Timestamp"}
+    DatabaseCreate:
+      type: object
+      additionalProperties: false
+      required: [org_id, name, plan]
+      properties:
+        org_id: {$ref: "#/components/schemas/UUID"}
+        name: {type: string, pattern: "^[a-z][a-z0-9-]{0,62}$", maxLength: 63}
+        plan: {$ref: "#/components/schemas/PlanID"}
+        postgres_major: {type: integer, enum: [18], default: 18}
+        allowed_cidrs:
+          description: Source networks allowed to connect; empty means anywhere.
+          type: array
+          maxItems: 50
+          items: {type: string, maxLength: 43}
+    PurgeRequest:
+      type: object
+      additionalProperties: false
+      required: [confirm_ref]
+      properties:
+        confirm_ref: {type: string, pattern: "^t-[a-z2-7]{8}$", maxLength: 10, description: "Must repeat the database's ref."}
+    ScaleRequest:
+      type: object
+      additionalProperties: false
+      required: [plan]
+      properties:
+        plan: {$ref: "#/components/schemas/PlanID"}
+    StorageRequest:
+      type: object
+      additionalProperties: false
+      required: [storage_gb]
+      properties:
+        storage_gb: {type: integer, minimum: 1, maximum: 1000}
+    RestoreRequest:
+      type: object
+      additionalProperties: false
+      required: [target_time, name]
+      properties:
+        target_time: {$ref: "#/components/schemas/Timestamp"}
+        name: {type: string, pattern: "^[a-z][a-z0-9-]{0,62}$", maxLength: 63}
+    MigrateRequest:
+      type: object
+      additionalProperties: false
+      required: [method, source_host, source_port, source_database, source_user]
+      properties:
+        method: {type: string, enum: [dump, logical_replication]}
+        source_host: {type: string, maxLength: 253}
+        source_port: {type: integer, minimum: 1, maximum: 65535}
+        source_database: {type: string, maxLength: 63}
+        source_user: {type: string, maxLength: 63}
+        source_password: {type: string, maxLength: 256, writeOnly: true}
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [username, password, database, host_pooled, host_direct, port, sslmode]
+      properties:
+        username: {type: string, maxLength: 63}
+        password: {type: string, maxLength: 256}
+        database: {type: string, maxLength: 63}
+        host_pooled: {type: string, maxLength: 253}
+        host_direct: {type: string, maxLength: 253}
+        port: {type: integer, const: 5432}
+        sslmode: {type: string, const: verify-full}
+    Metrics:
+      type: object
+      additionalProperties: false
+      required: [range, series]
+      properties:
+        range: {type: string, enum: [1h, 24h, 7d, 30d]}
+        series:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, unit, points]
+            properties:
+              name: {type: string, enum: [cpu_m, memory_mi, storage_bytes, connections, tps, backup_bytes]}
+              unit: {type: string, maxLength: 20}
+              points:
+                type: array
+                maxItems: 1000
+                items: {type: array, prefixItems: [{type: integer, format: int64}, {type: number}], minItems: 2, maxItems: 2}
+    LogLine:
+      type: object
+      additionalProperties: false
+      required: [at, severity, message]
+      properties:
+        at: {$ref: "#/components/schemas/Timestamp"}
+        severity: {type: string, enum: [DEBUG, INFO, NOTICE, WARNING, ERROR, LOG, FATAL, PANIC]}
+        message: {type: string, maxLength: 8000}
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, checked_at]
+      properties:
+        status: {type: string, enum: [healthy, degraded, down, unknown]}
+        checked_at: {$ref: "#/components/schemas/Timestamp"}
+        reasons: {type: array, maxItems: 20, items: {type: string, maxLength: 200}}
+    Backup:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, started_at]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        kind: {type: string, enum: [scheduled, on_demand, pre_change]}
+        status: {type: string, enum: [running, completed, failed]}
+        started_at: {$ref: "#/components/schemas/Timestamp"}
+        finished_at: {$ref: "#/components/schemas/Timestamp"}
+        size_bytes: {type: integer, format: int64, minimum: 0}
+    RecoveryWindow:
+      type: object
+      additionalProperties: false
+      properties:
+        earliest: {$ref: "#/components/schemas/Timestamp"}
+        latest: {$ref: "#/components/schemas/Timestamp"}
+
+    OperationState:
+      type: string
+      enum: [pending, running, waitlisted, succeeded, failed, cancelling, cancelled]
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [id, org_id, kind, state, created_at]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        org_id: {$ref: "#/components/schemas/UUID"}
+        database_id: {$ref: "#/components/schemas/UUID"}
+        kind: {type: string, maxLength: 40, examples: [create_database, scale, expand_storage, restore]}
+        state: {$ref: "#/components/schemas/OperationState"}
+        error: {$ref: "#/components/schemas/Problem"}
+        created_at: {$ref: "#/components/schemas/Timestamp"}
+        finished_at: {$ref: "#/components/schemas/Timestamp"}
+        events:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [seq, state, message, at]
+            properties:
+              seq: {type: integer, minimum: 1}
+              state: {type: string, maxLength: 40}
+              message: {type: string, maxLength: 2000}
+              at: {$ref: "#/components/schemas/Timestamp"}
+
+    McpGrant:
+      type: object
+      additionalProperties: false
+      required: [id, client_id, mode, database_ids, capabilities, created_at, expires_at]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        client_id: {type: string, maxLength: 2048}
+        client_name: {type: string, maxLength: 200}
+        mode: {type: string, enum: [read, read_write]}
+        database_ids: {type: array, maxItems: 100, items: {$ref: "#/components/schemas/UUID"}}
+        capabilities: {type: array, maxItems: 20, items: {type: string, maxLength: 60}}
+        created_at: {$ref: "#/components/schemas/Timestamp"}
+        expires_at: {$ref: "#/components/schemas/Timestamp"}
+        revoked_at: {$ref: "#/components/schemas/Timestamp"}
+    Approval:
+      type: object
+      additionalProperties: false
+      required: [id, database_id, scope, statement_preview, state, expires_at]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        database_id: {$ref: "#/components/schemas/UUID"}
+        scope: {type: string, maxLength: 200}
+        statement_preview: {type: string, maxLength: 20000, description: "The exact SQL the client asked to run; untrusted text, rendered as text."}
+        state: {type: string, enum: [pending, approved, denied, expired, used]}
+        expires_at: {$ref: "#/components/schemas/Timestamp"}
+
+    Subscription:
+      type: object
+      additionalProperties: false
+      required: [id, database_id, plan, state]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        database_id: {$ref: "#/components/schemas/UUID"}
+        plan: {$ref: "#/components/schemas/PlanID"}
+        state: {type: string, enum: [created, authenticated, active, pending, halted, cancelled, completed, expired]}
+        current_period_start: {$ref: "#/components/schemas/Timestamp"}
+        current_period_end: {$ref: "#/components/schemas/Timestamp"}
+        grace_until: {$ref: "#/components/schemas/Timestamp"}
+    Invoice:
+      type: object
+      additionalProperties: false
+      required: [id, period_start, period_end, amount_paise, gst_paise, currency, state]
+      properties:
+        id: {$ref: "#/components/schemas/UUID"}
+        period_start: {type: string, format: date, maxLength: 10}
+        period_end: {type: string, format: date, maxLength: 10}
+        amount_paise: {type: integer, format: int64, minimum: 0}
+        gst_paise: {type: integer, format: int64, minimum: 0}
+        currency: {type: string, const: INR}
+        state: {type: string, enum: [draft, issued, paid, void]}
+
+    DesiredState:
+      type: object
+      additionalProperties: false
+      required: [cell_id, generation, databases, tombstones]
+      properties:
+        cell_id: {type: string, pattern: "^c[0-9]{1,3}$"}
+        generation: {type: integer, format: int64, minimum: 0}
+        databases:
+          type: array
+          maxItems: 5000
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant_ref, generation, spec]
+            properties:
+              tenant_ref: {type: string, pattern: "^t-[a-z2-7]{8}$"}
+              generation: {type: integer, format: int64, minimum: 1}
+              spec: {type: object, description: "TenantDatabase spec (operator/api/v1alpha1), validated by the CRD schema in the cell."}
+        tombstones:
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, tenant_ref, generation]
+            properties:
+              id: {$ref: "#/components/schemas/UUID"}
+              tenant_ref: {type: string, pattern: "^t-[a-z2-7]{8}$"}
+              generation: {type: integer, format: int64, minimum: 1}
+    StatusReport:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 5000
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant_ref, observed_generation, conditions]
+            properties:
+              tenant_ref: {type: string, pattern: "^t-[a-z2-7]{8}$"}
+              observed_generation: {type: integer, format: int64, minimum: 0}
+              conditions:
+                type: array
+                maxItems: 20
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [type, status, reason]
+                  properties:
+                    type: {type: string, maxLength: 60}
+                    status: {type: string, enum: ["True", "False", "Unknown"]}
+                    reason: {type: string, maxLength: 60}
+                    message: {type: string, maxLength: 1000}
+    CapacityReport:
+      type: object
+      additionalProperties: false
+      required: [taken_at, nodes]
+      properties:
+        taken_at: {$ref: "#/components/schemas/Timestamp"}
+        nodes:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, allocatable_cpu_m, allocatable_memory_mi, requested_cpu_m, requested_memory_mi, lvm_free_bytes, free_pod_slots]
+            properties:
+              name: {type: string, maxLength: 63}
+              allocatable_cpu_m: {type: integer, minimum: 0}
+              allocatable_memory_mi: {type: integer, minimum: 0}
+              requested_cpu_m: {type: integer, minimum: 0}
+              requested_memory_mi: {type: integer, minimum: 0}
+              lvm_free_bytes: {type: integer, format: int64, minimum: 0}
+              free_pod_slots: {type: integer, minimum: 0}
+    EventReport:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, tenant_ref, reason, at]
+            properties:
+              id: {$ref: "#/components/schemas/UUID"}
+              tenant_ref: {type: string, pattern: "^t-[a-z2-7]{8}$"}
+              reason: {type: string, maxLength: 60}
+              message: {type: string, maxLength: 1000}
+              at: {$ref: "#/components/schemas/Timestamp"}

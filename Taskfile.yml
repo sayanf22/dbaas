@@ -27,10 +27,37 @@ tasks:
       - actionlint
 
   test:
-    desc: Unit tests (Go with the race detector, Rust with nextest)
+    desc: Unit tests (Go with the race detector, Rust with nextest); admin-DB tests skip without the local stack
     cmds:
       - go test -race -count=1 ./...
       - cd gateway && cargo nextest run --locked
+
+  gen:
+    desc: Regenerate sqlc queries and the OpenAPI Go types (never edit the output by hand)
+    cmds:
+      - cd db && sqlc generate
+      - oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
+      - bash hack/gen-river-migration.sh
+
+  db:up:
+    desc: Start the local Supabase stack and migrate the admin DB (dev only)
+    cmds:
+      - supabase start
+      - bash hack/admin-db.sh migrate up
+      - bash hack/admin-db.sh roles
+
+  db:test:
+    desc: Admin-DB tests against the local Supabase stack (throwaway databases; dev data untouched)
+    env:
+      ADMIN_DB_TEST_URL: postgres://postgres:postgres@127.0.0.1:54322/postgres?sslmode=disable
+    cmds:
+      - go test -race -count=1 ./db/... ./internal/store/...
+
+  api:lint:
+    desc: Lint the OpenAPI contract (errors fail) and run the contract tests
+    cmds:
+      - go run github.com/daveshanley/vacuum@v0.30.6 lint -r api/vacuum-ruleset.yaml -n error api/openapi.yaml
+      - go test -count=1 ./api/
 
   build:
     desc: Build Go binaries, the gateway and the static web exports

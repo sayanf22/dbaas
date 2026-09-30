@@ -95,6 +95,7 @@ Compensating controls for GitHub Free, where private repos can't enforce branch 
 ### Step 0.2 — API contract and admin schema v0
 **Tasks:** `api/openapi.yaml` (PDF §22.1 + internal agent endpoints + plans/billing, RFC 9457 errors); oapi-codegen; goose migrations for §9; sqlc queries; River migrations; idempotency middleware; per-service database roles.
 **Done when:** migrations apply and roll back on the local Supabase stack; contract tests pass; a repeated POST with the same `Idempotency-Key` returns the original response.
+**Status (2026-09-30): done locally.** 10 goose migrations (35 tables incl. River, RLS on all, per-role grants, `retention_sweep`), schema invariant tests, 44-operation OpenAPI 3.1 contract with contract tests + vacuum lint, generated Go types, sqlc idempotency queries, idempotency middleware (per-caller keys, replay, 409/422, one-time secrets never stored) tested in memory, against Postgres and through the local Supavisor transaction pooler. CI runs the admin-DB tests against a throwaway Postgres 17.6 service.
 
 ### Step 0.3 — Local cell (k3d = K3s in Docker)
 **Tasks:** `supabase start` (local Postgres + Auth) for the admin DB; **k3d** with the pinned K3s v1.36 release, 3 servers (embedded etcd) + 1 agent, Traefik/ServiceLB/local-storage disabled, the same K3s config templates as production (`deploy/k3s/`); Flux against a local branch with SOPS decryption (a local age key); TopoLVM on a loop-device VG (local only); CNPG 1.30.1 + Barman Cloud Plugin 0.15.0; MinIO as the local S3; cert-manager (self-signed); VictoriaMetrics single; check whether the pinned PostgreSQL image is built with lz4 and zstd (`pg_config --configure`).
@@ -323,7 +324,7 @@ oauth_revoked_tokens(jti, expires_at)                                      -- ac
 mcp_grants(id, user_id, client_id, org_id, tenant_ids uuid[], mode, capabilities text[], expires_at, revoked_at)
 approvals(id, grant_id, op_hash, tenant_id, database_id, actor, scope, expires_at, used_at)
 audit_events(id, at, actor, actor_type, org_id, tenant_id, cell_id, action, target, request_id, details jsonb)   -- append-only; exported then swept after 90 days
-idempotency_keys(key, org_id, request_hash, response jsonb, created_at)
+idempotency_keys(principal, key, request_hash, status_code, response jsonb, created_at, completed_at)   -- scoped to the caller (user:/api_key:), 24 h; one-time secrets never stored
 -- plus River tables
 ```
 

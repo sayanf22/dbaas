@@ -28,6 +28,11 @@ linters:
   exclusions:
     paths:
       - third_party            # upstream clones, reference only
+    rules:
+      # t.Cleanup runs after the test's context is cancelled, so cleanup deliberately starts a fresh,
+      # bounded context (context.WithTimeout(context.Background(), …)); contextcheck can't see that.
+      - path: _test\.go
+        linters: [contextcheck]
 formatters:
   enable:
     - gofmt
