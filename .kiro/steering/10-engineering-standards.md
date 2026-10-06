@@ -27,7 +27,7 @@ inclusion: always
 - MUST: list endpoints and list queries are paginated (cursor-based) with a max page size; no unbounded `SELECT`s or loops over all tenants in a request path. Fleet-wide work runs as batched River jobs.
 - MUST: every new query is backed by an index; PRs that add queries include the `EXPLAIN` of the realistic case.
 - MUST: bound all concurrency (worker pools, semaphores, pgx pool sizes, channel capacities) and apply backpressure instead of queueing without limit.
-- MUST: respect the resource budgets in `plan/03-cost-model.md` §5–§6 (per-tenant pods and platform pods) and the Supabase connection budget in `plan/01-architecture.md` §10.2. A change that raises a request, adds a pod or adds a connection updates those tables in the same PR.
+- MUST: respect the resource budgets in `plan/03-cost-model.md` §5–§6 (per-tenant pods and platform pods per node role) and the admin-DB connection budget in `plan/01-architecture.md` §10.2. A change that raises a request, adds a pod or adds a connection updates those tables in the same PR.
 - MUST: IDs are UUIDv7 (time-ordered) unless a protocol dictates otherwise; tenant refs are opaque (`t-` + random base32).
 - SHOULD: design every API and job so a second cell, a second region or ten times the tenants needs configuration, not code changes.
 
@@ -39,7 +39,7 @@ inclusion: always
 - MUST: every mutating API accepts `Idempotency-Key`; every job is idempotent and unique by that key.
 - MUST: graceful shutdown on SIGTERM: fail readiness → stop accepting → drain in-flight work → exit before `terminationGracePeriodSeconds`.
 - MUST: readiness = "can serve now"; liveness only detects unrecoverable states (deadlock). Liveness never checks dependencies.
-- MUST: dependencies (Supabase, the VM provider API, Cloudflare, the email service) are wrapped with timeouts and circuit breaking; when they are down, return `503` + `Retry-After` and keep the data plane untouched.
+- MUST: dependencies (the admin DB, Auth, the VM provider API, Cloudflare, the email service) are wrapped with timeouts and circuit breaking; when they are down, return `503` + `Retry-After` and keep the data plane untouched.
 - MUST: time is UTC `time.Time`/`Duration` (Go) or `std::time`/`chrono` UTC (Rust). Never local time; never bare integers without a unit in the name.
 
 ## 5. Security (details in `15-security-and-reliability.md` and the per-language files)
@@ -48,7 +48,7 @@ inclusion: always
 - MUST: SQL only through sqlc-generated queries (parameterized). The only exception is the MCP executor, which runs parsed, checked customer SQL under a constrained role.
 - MUST: secrets never appear in git, logs, traces, errors, metrics labels or panic messages. Redact at the logger.
 - MUST: outbound fetches of user-controlled URLs (CIMD documents, webhooks) go through the SSRF-guarded HTTP client: https only, public IPs only, size and time limits, no redirects to private ranges.
-- MUST: least privilege everywhere (Kubernetes RBAC per service account, no instance credentials in workloads, scoped Cloudflare/R2/provider tokens, Supabase network restrictions).
+- MUST: least privilege everywhere (Kubernetes RBAC per service account, no instance credentials in workloads, scoped Cloudflare/R2/provider tokens, admin-DB roles per service and NetworkPolicy limiting who reaches the admin DB).
 - MUST: generate tokens and keys with a CSPRNG (`crypto/rand`, `rand::rngs::OsRng`); compare secrets in constant time.
 
 ## 6. Observability
@@ -59,12 +59,12 @@ inclusion: always
 
 ## 7. Data and API
 - MUST: admin-DB migrations are expand/contract and compatible with the previous release (N-1). Never rename or drop a column in the release that stops using it. Indexes are created `CONCURRENTLY`; migrations set `lock_timeout`.
-- MUST: RLS stays enabled on every admin-DB table; the Supabase Data API roles get no grants in our schema.
+- MUST: RLS stays enabled on every admin-DB table; only our per-service roles get grants in our schema.
 - MUST: API changes start in `api/openapi.yaml`; `/v1` changes are additive only; errors use RFC 9457 problem details; async operations return `202` + `operation_id`.
 - MUST: a state change and the River job that acts on it commit in the same transaction (`InsertTx`).
 
 ## 8. Testing
-- MUST: unit tests for logic, integration tests against real dependencies (local Supabase stack / testcontainers, k3d running the pinned K3s version), e2e for user flows. Failure paths are tested, not just happy paths.
+- MUST: unit tests for logic, integration tests against real dependencies (the admin DB in the local cell, or the local Supabase stack before Step 0.6; testcontainers; k3d running the pinned K3s version; the QEMU/KVM test bed for storage), e2e for user flows. Failure paths are tested, not just happy paths.
 - MUST: parsers of untrusted input (Postgres startup packets, SQL, CIMD documents, webhooks) have fuzz targets.
 - MUST: a bug fix ships with a test that fails without the fix.
 - MUST: tests are deterministic: no sleeps for synchronization, injected clocks, isolated data per test.

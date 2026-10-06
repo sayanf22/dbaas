@@ -16,7 +16,9 @@ fileMatchPattern: '**/*Dockerfile*'
 - MUST: builder stages that install OS packages use one `RUN` with `apt-get update && apt-get install -y --no-install-recommends <pinned versions>` and delete the apt lists; any `RUN` with a pipe sets `SHELL ["/bin/bash", "-o", "pipefail", "-c"]` first.
 - MUST: Go binaries build with `CGO_ENABLED=0` unless the package needs cgo (only `pg_query_go` users), `-trimpath`, and `-ldflags="-s -w -X …version"`; the gateway builds with `cargo auditable build --release --locked`.
 - MUST: images build natively for `linux/amd64` (GitHub `ubuntu-24.04` runners) and `linux/arm64` (`ubuntu-24.04-arm`), are merged into one manifest list and pushed to ghcr.io by digest; third-party images the cell uses are mirrored there by digest too.
-- MUST: images carry OCI labels (`org.opencontainers.image.source`, `.revision`, `.version`), an SBOM (syft) and a cosign signature; Trivy blocks critical vulnerabilities.
+- MUST: images carry OCI (Open Container Initiative) labels (`org.opencontainers.image.source`, `.revision`, `.version`), an SBOM (syft) and a cosign signature; Trivy blocks critical vulnerabilities.
 - MUST: hadolint passes with no ignored rules unless the ignore carries a reason comment.
 - MUST: images hold no configuration or secrets; everything comes from the environment or mounted files at run time.
+- MUST: our node-level images (compute governor, WAL receiver) follow the same rules as every other Go image: distroless, non-root where the host access allows it, only the capabilities named in their PSA exemption (plan/01 §6.3). The WAL receiver's `pg_receivewal` comes from the pinned PostgreSQL image, never from a package installed at run time.
+- MUST: third-party images that run privileged on the host (LINSTOR satellite, the DRBD module loader, `tlshd`) are mirrored to ghcr.io by digest, recorded in `deploy/vendor/images.lock`, scanned like ours, and bumped only together with the Piraeus Operator release they belong to.
 - SHOULD: order layers from least to most frequently changing (dependency download before source copy) and use BuildKit cache mounts for Go and Cargo caches.
