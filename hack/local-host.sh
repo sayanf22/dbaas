@@ -68,7 +68,9 @@ After=local-fs.target
 [Service]
 Type=simple
 ExecStartPre=/bin/bash -c 'losetup -j $state/lvm/%i.img | grep -q . || losetup -f $state/lvm/%i.img; vgchange -q -ay tenantvg-\$(echo %i | sed s/^k3d-//)'
-ExecStart=$lvmd_bin --config=$state/etc/%i.yaml
+# Metrics off: lvmd's default is :8080 on every interface, which collides with control-api and exposes an
+# unauthenticated endpoint; nothing scrapes the host lvmd (TopoLVM's own metrics come from topolvm-node).
+ExecStart=$lvmd_bin --config=$state/etc/%i.yaml --metrics-bind-address=
 Restart=on-failure
 
 [Install]

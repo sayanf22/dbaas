@@ -9,6 +9,8 @@ trap 'echo "capacity-test: failed at line $LINENO" >&2' ERR
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ctx="${KUBE_CONTEXT:-k3d-local}"
+# VictoriaMetrics' HTTP API through the Kubernetes API server's service proxy.
+vm=/api/v1/namespaces/observability/services/victoria-metrics-victoria-metrics-single-server:8428/proxy
 kc() { kubectl --context "$ctx" "$@"; }
 
 # probe <ns>: SQL round trip through the tenant's pooler as the tenant's own role; password via env, not args.
@@ -52,8 +54,10 @@ main() {
     kc -n "${refs[0]}" exec db-1 -c postgres -- pg_isready -q -t 5 -h "pooler.${refs[0]}.svc" -p 5432 && echo "control: ${refs[0]} reaches its own pooler"
   fi
 
-  echo "--- measured (kubectl top, MiB) vs requested"
-  kc top pods -A --no-headers | awk '$1 ~ /^t-cap/ { sub("Mi", "", $4); used += $4; pods++ } END { printf "tenant pods: %d, memory in use: %d MiB (%.0f MiB per tenant)\n", pods, used, used / (pods / 2) }'
+  echo "--- measured (VictoriaMetrics, cAdvisor working set, MiB) vs requested"
+  # metrics-server is disabled (deploy/k3s/server.yaml); VictoriaMetrics' cAdvisor scrape is the source.
+  kc get --raw "${vm}/api/v1/query?query=$(jq -rn --arg q 'sum(container_memory_working_set_bytes{namespace=~"t-cap.*",container!=""})' '$q|@uri')" |
+    jq -r --argjson n "$n" '.data.result[0].value[1] // "0" | tonumber / 1048576 | "tenant containers: \(floor) MiB in use (\(. / $n | floor) MiB per tenant)"'
   kc get node -o json | jq -r '.items[0].status.allocatable | "node allocatable: cpu \(.cpu), memory \(.memory)"'
   kc describe node | awk '/Allocated resources/,/Events/' | grep -E 'cpu|memory' | head -2
 

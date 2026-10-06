@@ -6,11 +6,14 @@
 
 # Pod network: WireGuard-encrypted flannel between nodes (plan/01 §4.2). Critical.
 flannel-backend: wireguard-native
-# Traefik, ServiceLB and local-path are replaced by Cloudflare Tunnel, pg-gateway hostPort and TopoLVM. Critical.
+# Traefik, ServiceLB and local-path are replaced by Cloudflare Tunnel, pg-gateway hostPort and TopoLVM.
+# metrics-server is off: VictoriaMetrics (cAdvisor + kubelet) is the cell's metrics source and nothing uses
+# the metrics API (no HPA, no `kubectl top` in scripts); it saved its 70 Mi request on the launch VM. Critical.
 disable:
   - traefik
   - servicelb
   - local-storage
+  - metrics-server
 # Spegel: nodes serve cached images to each other, so a registry outage doesn't block restarts (plan/01 §5.1).
 embedded-registry: true
 # Secrets encrypted at rest in etcd (CIS 1.2.27). Critical.

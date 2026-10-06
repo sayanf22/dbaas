@@ -108,8 +108,8 @@ spec:
   instanceSidecarConfiguration:
     retentionPolicyIntervalSeconds: 21600                # 6 h: keeps R2 LIST operations low (03 §8)
     resources:
-      requests: {cpu: ${SIDECAR_CPU_REQ}, memory: ${SIDECAR_MEM}}
-      limits: {cpu: ${SIDECAR_CPU_LIM}, memory: ${SIDECAR_MEM}}
+      requests: {cpu: ${SIDECAR_CPU_REQ}, memory: ${SIDECAR_MEM_REQ}}
+      limits: {cpu: ${SIDECAR_CPU_LIM}, memory: ${SIDECAR_MEM_LIM}}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -142,8 +142,11 @@ spec:
       isolationCheck:
         enabled: false                                   # single instance: never restart on API loss (01 §9)
   resources:
-    requests: {cpu: ${PG_CPU_REQ}, memory: ${PG_MEM}}
-    limits: {cpu: ${PG_CPU_LIM}, memory: ${PG_MEM}}
+    requests: {cpu: ${PG_CPU_REQ}, memory: ${PG_MEM_REQ}}
+    limits: {cpu: ${PG_CPU_LIM}, memory: ${PG_MEM_LIM}}
+  # Below the platform: under node memory pressure kubelet evicts tenants first (deploy/flux/infrastructure/
+  # priority-classes). CNPG uses it for the instance pod and its initdb/restore Job pods.
+  priorityClassName: dbcloud-tenant
   # Tenant pods run only on tenant nodes, never on cp-1 (40-kubernetes-operator.md).
   affinity:
     nodeSelector: {dbcloud.io/pool: tenant}
@@ -168,10 +171,11 @@ spec:
   template:
     spec:
       nodeSelector: {dbcloud.io/pool: tenant}
+      priorityClassName: dbcloud-tenant
       containers:
         - name: pgbouncer
           image: ${PGB_IMAGE}
           imagePullPolicy: IfNotPresent
           resources:
-            requests: {cpu: ${PGB_CPU_REQ}, memory: ${PGB_MEM}}
-            limits: {cpu: ${PGB_CPU_LIM}, memory: ${PGB_MEM}}
+            requests: {cpu: ${PGB_CPU_REQ}, memory: ${PGB_MEM_REQ}}
+            limits: {cpu: ${PGB_CPU_LIM}, memory: ${PGB_MEM_LIM}}

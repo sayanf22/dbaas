@@ -15,6 +15,11 @@ images:
   - name: quay.io/jetstack/cert-manager-cainjector
     digest: sha256:c85268c64f2e0e76684bf5fe8906caff34b82523561c6affe0fae3546bd87562
 patches:
+  - target: {kind: Deployment, namespace: cert-manager}
+    patch: |
+      - op: add
+        path: /spec/template/spec/priorityClassName
+        value: dbcloud-platform
   - target: {kind: Deployment, namespace: cert-manager, name: cert-manager}
     patch: |
       - op: add

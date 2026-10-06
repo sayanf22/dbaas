@@ -1,0 +1,30 @@
+# Pod priorities of the cell. When a node runs short of memory, kubelet evicts pods whose usage exceeds their
+# requests first and, among those, the lowest priority first; the scheduler preempts only lower priorities.
+# Platform pods therefore outrank tenant pods: losing the platform (TopoLVM, CNPG, pg-gateway, Flux) would
+# take every tenant down, losing one tenant affects one customer. K3s's own add-ons keep their built-in
+# system-cluster-critical / system-node-critical. Neither class is the global default: a pod without a
+# class gets priority 0 and ranks below both.
+# Note: the kernel OOM killer doesn't read priorities; it ranks by QoS class and usage (oom_score_adj).
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: dbcloud-platform
+# 1,000,000: above every tenant, well below system-cluster-critical (2,000,000,000); same value as the
+# class the TopoLVM chart would otherwise create for itself (priorityClass.value).
+value: 1000000
+globalDefault: false
+# A pending platform pod may preempt a tenant pod: pg-gateway or the TopoLVM node plugin being unschedulable
+# takes every tenant on the node offline, so one tenant's restart is the smaller loss.
+preemptionPolicy: PreemptLowerPriority
+description: dbcloud platform components (operators, storage, Flux, observability, gateway, control plane)
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: dbcloud-tenant
+# 1,000: above priority-0 pods (one-off probes), below the platform.
+value: 1000
+globalDefault: false
+# Tenants never preempt anything: placement admits a tenant only where its requests fit (plan/01 §6).
+preemptionPolicy: Never
+description: tenant database and pooler pods (one namespace per tenant)

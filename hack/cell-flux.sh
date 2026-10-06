@@ -60,7 +60,7 @@ main() {
 
   flux --context "$ctx" reconcile source oci dbcloud -n flux-system >/dev/null
   local k
-  for k in flux-system cert-manager controllers services local-s3; do
+  for k in flux-system priority-classes cert-manager controllers services local-s3; do
     kc -n flux-system wait "kustomization/${k}" --for=condition=Ready --timeout=900s >/dev/null
     echo "ready: ${k}"
   done
