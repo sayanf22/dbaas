@@ -15,7 +15,9 @@ ctx="${KUBE_CONTEXT:-k3d-local}"
 # shellcheck disable=SC2016 # reason: the literal ${NAME} list is envsubst's input, it must not expand here
 vars='${TENANT} ${PLAN} ${STORAGE} ${S3_BUCKET} ${S3_ENDPOINT} ${PG_IMAGE} ${PGB_IMAGE} ${PG_CPU_REQ} ${PG_CPU_LIM} ${PG_MEM} ${MAX_CONNECTIONS} ${SHARED_BUFFERS} ${ARCHIVE_TIMEOUT} ${POOL_MAX_CLIENTS} ${POOL_SIZE} ${SIDECAR_CPU_REQ} ${SIDECAR_CPU_LIM} ${SIDECAR_MEM} ${PGB_CPU_REQ} ${PGB_CPU_LIM} ${PGB_MEM}'
 
+# die <message>: prints the message to stderr and exits 2.
 die() { echo "tenant: $*" >&2; exit 2; }
+# kc: kubectl pinned to the cell's context.
 kc() { kubectl --context "$ctx" "$@"; }
 
 # check_args <ref> <plan>: allow-list validation; nothing from the arguments reaches a shell or path unchecked.
@@ -27,6 +29,8 @@ check_args() {
 # image <prefix>: digest-pinned reference from deploy/vendor/images.lock.
 image() { grep -m1 "^$1" "${root}/deploy/vendor/images.lock"; }
 
+# render <ref> <plan>: prints the tenant's manifests. The subshell keeps the plan variables from leaking
+# into the caller; envsubst substitutes only the names in $vars, so other `$` text in the template survives.
 render() {
   check_args "$@"
   (
@@ -43,6 +47,7 @@ render() {
   )
 }
 
+# create <ref> <plan>: namespace first (the Secret needs it), then the S3 credentials, then the rest.
 create() {
   check_args "$@"
   local s3env="${root}/.local/s3.env"
@@ -54,14 +59,17 @@ create() {
   echo "created $1 ($2)"
 }
 
+# delete <ref> --yes: deletes the tenant namespace and waits until it is gone (destroys its data).
 delete() {
   [[ "${1:-}" =~ ^t-[a-z0-9]{8}$ ]] || die "tenant ref must match ^t-[a-z0-9]{8}\$"
   [[ "${2:-}" == "--yes" ]] || die "delete destroys all data of $1; repeat with --yes"
   kc delete namespace "$1" --wait=true
 }
 
+# list: every tenant's CNPG cluster phase and ready instances.
 list() { kc get clusters.postgresql.cnpg.io -A -o custom-columns=TENANT:.metadata.namespace,PHASE:.status.phase,READY:.status.readyInstances; }
 
+# main <command> [args]: dispatches to the allow-listed subcommands.
 main() {
   local cmd="${1:-}"
   shift || true

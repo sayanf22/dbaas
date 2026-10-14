@@ -25,6 +25,7 @@ public_secret_names() {
     | sort -u | grep -E 'SECRET|TOKEN|PASSWORD|PRIVATE|SERVICE_ROLE|_DSN|DATABASE_URL' || true
 }
 
+# main: runs both checks, reports every finding (not just the first) and exits 1 if any was found.
 main() {
   local secrets names status=0
   secrets="$(unencrypted_secrets)"

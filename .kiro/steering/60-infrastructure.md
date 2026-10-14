@@ -6,7 +6,7 @@ fileMatchPattern: 'deploy/**'
 # Infrastructure rules (node bootstrap, K3s, Terraform, Flux, Helm, Kubernetes manifests)
 
 ## Spend cap and provider neutrality first
-- MUST: no resource that bills is added unless the build-plan step and `plan/03-cost-model.md` name it; the PR states the monthly cost. The platform stays ≤ ₹9,000/month; the reference cell ≤ ₹5,600/month.
+- MUST: no resource that bills is added unless the build-plan step and `plan/03-cost-model.md` name it; the PR states the monthly cost at the renewal price. The platform stays ≤ ₹9,000/month; the starter cell (one 4 vCPU / 16 GB / 200 GB NVMe VM, planning example Hostinger KVM 4 at ₹2,399, ADR-025) ≤ ₹2,400/month; the reference cell ≤ ₹5,600/month.
 - MUST: provider-specific code lives only in `deploy/terraform/modules/vm-<provider>`; everything else (node bootstrap, K3s config, Flux, Helm) works unchanged on any provider that passes `plan/03-cost-model.md` §2.1. No managed load balancer, block storage, secret manager or IAM of the VM provider is used.
 - MUST: a cell never spans providers or regions; all K3s servers share one private network in one location.
 
@@ -21,7 +21,7 @@ fileMatchPattern: 'deploy/**'
 
 ## K3s configuration (`deploy/k3s/`)
 - MUST: exact pinned version (for example `v1.36.4+k3s1`) in one place, used by the bootstrap, k3d, system-upgrade-controller Plans and CI.
-- MUST: servers: `cluster-init` on the first server, embedded etcd with 3 servers; `node-ip`/`advertise-address` on the private network; `tls-san` for the admin hostname; `flannel-backend: wireguard-native`; `disable: [traefik, servicelb, local-storage]`; `embedded-registry: true`; `secrets-encryption: true`; `protect-kernel-defaults: true`; PSA admission config file (restricted default, exemptions only as listed in plan/01 §6.3); API audit log with policy file and rotation; `NodeRestriction` and `EventRateLimit` admission plugins; `cp-1` gets `node-taint: CriticalAddonsOnly=true:NoExecute`.
+- MUST: servers: `cluster-init` on the first server (also on the one-server starter cell, so servers can join later without a rebuild), embedded etcd with 3 servers on the reference cell; `node-ip`/`advertise-address` on the private network; `tls-san` for the admin hostname; `flannel-backend: wireguard-native`; `disable: [traefik, servicelb, local-storage]`; `embedded-registry: true`; `secrets-encryption: true`; `protect-kernel-defaults: true`; PSA admission config file (restricted default, exemptions only as listed in plan/01 §6.3); API audit log with policy file and rotation; `NodeRestriction` and `EventRateLimit` admission plugins; `cp-1` gets `node-taint: CriticalAddonsOnly=true:NoExecute`.
 - MUST: kubelet args on every node: `max-pods=110`, `kube-reserved=cpu=500m,memory=2Gi` on servers (agents: `cpu=200m,memory=512Mi`), `system-reserved=cpu=200m,memory=512Mi`, `eviction-hard=memory.available<100Mi`; changes update `plan/03-cost-model.md` §6.
 - MUST: etcd snapshots every 6 h, 28 kept, compressed, uploaded to the cell's R2 bucket (`etcd-s3-endpoint`, region `auto`, credentials from a file readable only by root). The K3s server token and agent token are separate, stored in the password manager, and rotated with `k3s token rotate` per the runbook.
 - MUST: `registries.yaml` points `ghcr.io` at a read-only token; images are referenced by digest.
@@ -45,7 +45,7 @@ fileMatchPattern: 'deploy/**'
 ## Kubernetes manifests (Flux, Helm values, platform objects)
 - MUST: HelmReleases pin chart versions and image digests; Renovate proposes bumps. Every Helm value that differs from the chart default has a comment explaining why.
 - MUST: every container has CPU and memory requests, a memory limit equal to its request, and matches the platform footprint table in `plan/03-cost-model.md` §6; changing one updates the table.
-- MUST: every stateless platform Deployment has 2 replicas with `topologySpreadConstraints` across `node-1`/`node-2` and a PodDisruptionBudget `minAvailable: 1`; nothing but K3s itself tolerates `CriticalAddonsOnly`.
+- MUST: on the reference cell every stateless platform Deployment has 2 replicas with `topologySpreadConstraints` across `node-1`/`node-2` and a PodDisruptionBudget `minAvailable: 1`; on the starter cell (one node, about 12 `base` tenants, `plan/03-cost-model.md` §6.1) the same manifests run 1 replica, with no other difference. Nothing but K3s itself tolerates `CriticalAddonsOnly`.
 - MUST: Pod Security `restricted` for everything except the documented exemptions (K3s components in `kube-system`, TopoLVM node plugin, node-exporter and Fluent Bit, pg-gateway's `hostPort`): `runAsNonRoot`, `allowPrivilegeEscalation: false`, `capabilities: drop: [ALL]`, `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem: true` where the app allows it. A ValidatingAdmissionPolicy allows `hostPort` only for the pg-gateway DaemonSet.
 - MUST: `automountServiceAccountToken: false` unless the pod calls the Kubernetes API; each workload has its own ServiceAccount.
 - MUST: RBAC: namespaced Roles over ClusterRoles; no wildcards; treat `list/watch` on Secrets, workload creation, `nodes/proxy`, `escalate`, `bind`, `impersonate`, `serviceaccounts/token` and webhook configuration as privileged and justify each in a comment.

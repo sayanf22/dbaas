@@ -9,21 +9,23 @@ set -Eeuo pipefail
 trap 'echo "pre-commit: failed at line $LINENO" >&2' ERR
 
 root="$(git rev-parse --show-toplevel)"
+# Copy of the staged files; global so the EXIT trap removes it on every exit path (it may hold a secret).
+work=""
 
+# main: copies the staged blobs to a temp dir, scans them with Trivy, then runs check-secrets.sh.
 main() {
-  local work file
+  local file
   work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
   # Scan the staged content (what will actually be committed), not the working tree.
   while IFS= read -r -d '' file; do
     mkdir -p "${work}/$(dirname "$file")"
     git show ":${file}" >"${work}/${file}"
   done < <(git diff --cached --name-only --diff-filter=ACMR -z)
   if ! trivy fs -q --scanners secret --exit-code 1 "$work"; then
-    rm -rf "$work"
     echo "pre-commit: secret found in staged files; remove it and rotate it" >&2
     return 1
   fi
-  rm -rf "$work"
   bash "${root}/hack/check-secrets.sh"
 }
 

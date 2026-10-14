@@ -36,6 +36,9 @@ const (
 	maxConnIdleTime = 5 * time.Minute
 	// connectTimeout bounds TCP + TLS + auth; each request has its own deadline on top.
 	connectTimeout = 5 * time.Second
+	// maxPoolConns caps one process's pool: Supabase Free allows 60 connections and the platform's
+	// whole budget is 30 of them (plan/01 §10.2), so a larger value is a configuration mistake.
+	maxPoolConns = 20
 )
 
 // PoolConfig configures one pool.
@@ -55,8 +58,8 @@ var ErrInsecureConnection = errors.New("store: admin DB connections must use ssl
 
 // NewPool opens a pgx pool configured for cfg.Mode. It fails fast on invalid configuration.
 func NewPool(ctx context.Context, cfg PoolConfig) (*pgxpool.Pool, error) {
-	if cfg.MaxConns < 1 || cfg.MaxConns > 20 {
-		return nil, fmt.Errorf("store: MaxConns %d outside 1..20 (see plan/01 §10.2 budget)", cfg.MaxConns)
+	if cfg.MaxConns < 1 || cfg.MaxConns > maxPoolConns {
+		return nil, fmt.Errorf("store: MaxConns %d outside 1..%d (see plan/01 §10.2 budget)", cfg.MaxConns, maxPoolConns)
 	}
 	if err := checkTLS(cfg); err != nil {
 		return nil, err
@@ -84,7 +87,8 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-// checkTLS enforces verify-full everywhere except loopback hosts when AllowInsecureLocal is set.
+// checkTLS enforces verify-full everywhere except loopback hosts when AllowInsecureLocal is set. It fails
+// closed: a keyword/value DSN ("host=… sslmode=…") has no URL query, so it is rejected rather than trusted.
 func checkTLS(cfg PoolConfig) error {
 	u, err := url.Parse(cfg.URL)
 	if err != nil {

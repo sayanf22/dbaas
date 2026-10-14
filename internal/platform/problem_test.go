@@ -7,6 +7,7 @@ import (
 	"testing"
 )
 
+// TestWriteProblem checks the RFC 9457 wire format: status, media type, no-store and the JSON body.
 func TestWriteProblem(t *testing.T) {
 	rec := httptest.NewRecorder()
 	WriteProblem(rec, NewProblem(http.StatusConflict, "request-in-progress", "Request in progress", "retry later"))

@@ -7,6 +7,8 @@ fileMatchPattern: 'gateway/**'
 
 `pg-gateway` sits on every customer connection. Correctness, bounded resources and graceful behaviour under load matter more than cleverness.
 
+Scope (ADR-027): Rust is for everything on the customer's connection or data path and for per-connection or per-packet code with tight latency or memory budgets: pg-gateway today, and any future data-path proxy, untrusted wire-protocol parser or tight-budget per-node agent. These rules apply to all of them.
+
 ## Crate hygiene
 - MUST: `#![forbid(unsafe_code)]` in every crate root (this also rejects `no_mangle`, `export_name` and `link_section`).
 - MUST: `cargo clippy -- -D warnings` with `clippy::pedantic` enabled and these denied: `unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `arithmetic_side_effects`, `todo`, `unimplemented`, `dbg_macro`, `print_stdout`, `print_stderr`. A local `#[allow(...)]` needs a `// reason:` comment.
@@ -14,6 +16,7 @@ fileMatchPattern: 'gateway/**'
 - MUST: stable toolchain and tier-1 targets only (`aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-gnu`); no overridden compiler flags or env vars beyond those in `Cargo.toml`.
 - MUST: edition 2024, `cargo fmt` clean; automatic clippy fixes are reviewed by hand.
 - MUST: `[profile.release] overflow-checks = true`, so an arithmetic bug fails loudly instead of wrapping.
+- MUST: `[profile.release]` also sets `lto = "thin"` (or `"fat"` when a benchmark shows it helps) and `codegen-units = 1` for cross-crate optimisation (Cargo's release defaults are `lto = false`, `codegen-units = 16`). `panic` stays `"unwind"`: `"abort"` would end the process, and with it every connection on the node, on the first panic in any connection task, which breaks the per-task isolation rule below.
 
 ## Errors and panics
 - MUST: library modules define typed errors with `thiserror`; `anyhow` only in `main.rs`/startup.
@@ -28,7 +31,14 @@ fileMatchPattern: 'gateway/**'
 - MUST: bounded everything: a global `Semaphore` for connections, per-tenant permits, bounded `mpsc` channels, capped buffers when parsing startup packets (reject packets over 10 KiB with `08P01`).
 - MUST: `select!` loops use only cancel-safe futures (`mpsc::Receiver::recv`, `TcpListener::accept`, `read`, `write`, `StreamExt::next`). `read_exact`, `read_to_end`, `write_all`, `Mutex::lock` and `Semaphore::acquire` are not cancel-safe: run them outside `select!` or in their own task. With `biased;`, the shutdown branch comes first; a timeout `sleep` is pinned outside the loop.
 - MUST: graceful shutdown: signal → `CancellationToken` → stop accepting → `TaskTracker::wait` with a drain deadline → exit.
-- MUST: after the handshake, relay with `tokio::io::copy_bidirectional` (no per-byte allocation, no parsing of the data stream).
+- MUST: after the handshake, relay with `tokio::io::copy_bidirectional_with_sizes` and fixed buffer-size constants (8 KiB per direction, tokio's default, unless a measurement justifies another value): no per-byte allocation, no parsing of the data stream, no buffers that grow with traffic.
+
+## Performance (targets in plan/01-architecture.md §8.2)
+- MUST: no heap allocation per message in the relay hot path; per connection, only the fixed relay buffers and the TLS session state are allocated, sized to stay within the per-connection memory target (≤ 64 KiB).
+- MUST: one task per connection, spawned only after the global connection `Semaphore` permit is acquired; nothing else spawns per connection.
+- MUST: the per-node global connection cap is derived from the measured per-connection memory and the pod's memory limit, and documented next to the constant.
+- MUST: route lookups in the handshake are lock-free reads of the `ArcSwap` map; no I/O, no Kubernetes API call and no lock on the connection path.
+- MUST: a change on the data path comes with a benchmark or load-test result against the §8.2 targets (added latency p50/p99, set-up p99, memory per connection) in the PR note.
 - MUST: shared route state is read lock-free (`arc_swap::ArcSwap`); updates replace the whole map atomically.
 - MUST: every `Send`/`Sync` bound we rely on is satisfied by the types themselves; no manual `unsafe impl`.
 

@@ -19,6 +19,7 @@ layers=(flux/system flux/infrastructure/cert-manager flux/infrastructure/control
 # Temporary directory for rendered manifests; global so the EXIT trap can still see it after main returns.
 work=""
 
+# main: renders every layer and the tenant example into a temp dir, then validates them all in one run.
 main() {
   local cache="${HOME}/.cache/kubeconform" layer files=()
   work="$(mktemp -d)"

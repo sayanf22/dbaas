@@ -54,8 +54,12 @@ const (
 	// bookkeepingTimeout bounds each store call made after the handler ran, independent of the client's
 	// connection, so a disconnect can't leave a key claimed.
 	bookkeepingTimeout = 5 * time.Second
-	// inProgressRetryAfter, unavailableRetryAfter: Retry-After values in seconds.
-	inProgressRetryAfter  = "2"
+	// inProgressRetryAfter: Retry-After in seconds for 409 in progress. Mutating requests are
+	// asynchronous (202 + operation), so a running duplicate normally finishes within 2 s; clients
+	// don't spin and don't wait long.
+	inProgressRetryAfter = "2"
+	// unavailableRetryAfter: Retry-After in seconds for 503 when the admin DB is unreachable; long
+	// enough for a Supavisor reconnect, short enough that a blip doesn't stall the dashboard.
 	unavailableRetryAfter = "5"
 )
 
@@ -97,9 +101,12 @@ type PrincipalFunc func(r *http.Request) (principal string, ok bool)
 
 // storedResponse is the JSON kept in Record.Response. Only headers needed to replay the response are kept.
 type storedResponse struct {
-	NoStore bool              `json:"no_store,omitempty"`
+	// NoStore marks a success whose body held a one-time secret; Headers and Body are then empty.
+	NoStore bool `json:"no_store,omitempty"`
+	// Headers holds the replayedHeaders the handler set, by canonical name.
 	Headers map[string]string `json:"headers,omitempty"`
-	Body    []byte            `json:"body,omitempty"`
+	// Body is the response body as sent (base64 in JSON), at most maxResponseBody bytes.
+	Body []byte `json:"body,omitempty"`
 }
 
 // replayedHeaders are the response headers stored and replayed; everything else is dropped.
@@ -107,10 +114,10 @@ var replayedHeaders = [...]string{"Content-Type", "Location"}
 
 // Middleware enforces the contract for the handlers it wraps. Safe for concurrent use.
 type Middleware struct {
-	store     Store
-	principal PrincipalFunc
-	now       func() time.Time
-	log       *slog.Logger
+	store     Store            // persists claims and responses; must be safe for concurrent use
+	principal PrincipalFunc    // identifies the caller; keys are scoped to it
+	now       func() time.Time // clock for TTL and staleness checks, injected for tests
+	log       *slog.Logger     // receives bookkeeping failures, which are logged instead of returned
 }
 
 // New returns a Middleware. now is time.Now in production and a fake clock in tests.
@@ -358,11 +365,12 @@ func requestHash(r *http.Request, body []byte) []byte {
 }
 
 // recorder buffers the handler's response so it can be stored before it is sent.
+// It is owned by the single request goroutine and not safe for concurrent use.
 type recorder struct {
-	header   http.Header
-	status   int
-	body     bytes.Buffer
-	overflow bool
+	header   http.Header  // headers set by the handler, copied to the client by writeTo
+	status   int          // first status written; 0 until the handler writes one
+	body     bytes.Buffer // buffered body, at most maxResponseBody bytes
+	overflow bool         // set once a Write would exceed maxResponseBody
 }
 
 // Header returns the buffered response headers.

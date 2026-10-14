@@ -24,12 +24,15 @@ type memStore struct {
 	failAll bool
 }
 
+// newMemStore returns an empty store whose claims are stamped with now.
 func newMemStore(now func() time.Time) *memStore {
 	return &memStore{now: now, records: map[string]Record{}}
 }
 
+// id is the map key for (principal, key); NUL can't occur in either, so pairs never collide.
 func (s *memStore) id(p, key string) string { return p + "\x00" + key }
 
+// fail returns an error when failAll simulates an unreachable admin DB. Callers hold s.mu.
 func (s *memStore) fail() error {
 	if s.failAll {
 		return errors.New("store down")
@@ -37,6 +40,7 @@ func (s *memStore) fail() error {
 	return nil
 }
 
+// Claim mirrors ClaimIdempotencyKey: insert if absent.
 func (s *memStore) Claim(_ context.Context, p, key string, h []byte) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -50,6 +54,7 @@ func (s *memStore) Claim(_ context.Context, p, key string, h []byte) (bool, erro
 	return true, nil
 }
 
+// Get mirrors GetIdempotencyKey, returning ErrNotFound for a missing key.
 func (s *memStore) Get(_ context.Context, p, key string) (Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,6 +68,7 @@ func (s *memStore) Get(_ context.Context, p, key string) (Record, error) {
 	return r, nil
 }
 
+// Reclaim mirrors ReclaimIdempotencyKey: compare-and-swap on CreatedAt.
 func (s *memStore) Reclaim(_ context.Context, p, key string, h []byte, observed time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,6 +83,7 @@ func (s *memStore) Reclaim(_ context.Context, p, key string, h []byte, observed 
 	return true, nil
 }
 
+// Complete mirrors CompleteIdempotencyKey: only the in-progress claim with the same hash is completed.
 func (s *memStore) Complete(_ context.Context, p, key string, h []byte, status int, resp []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -91,6 +98,7 @@ func (s *memStore) Complete(_ context.Context, p, key string, h []byte, status i
 	return nil
 }
 
+// Release mirrors ReleaseIdempotencyKey: only the in-progress claim with the same hash is deleted.
 func (s *memStore) Release(_ context.Context, p, key string, h []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,12 +117,14 @@ type clock struct {
 	t  time.Time
 }
 
+// now returns the current fake time.
 func (c *clock) now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.t
 }
 
+// advance moves the fake time forward by d.
 func (c *clock) advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -129,6 +139,8 @@ type fixture struct {
 	h     http.Handler
 }
 
+// newFixture wraps handler (which receives its 1-based call number) in the middleware, with a fake clock,
+// an in-memory store and a principal taken from the X-Test-Principal header.
 func newFixture(handler func(w http.ResponseWriter, r *http.Request, call int64)) *fixture {
 	f := &fixture{clock: &clock{t: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}}
 	f.store = newMemStore(f.clock.now)
@@ -167,6 +179,7 @@ func accepted(w http.ResponseWriter, _ *http.Request, call int64) {
 	}
 }
 
+// problemSlug returns the <slug> of the problem type in rec's body, failing the test if it isn't one.
 func problemSlug(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 	var p struct{ Type string }
@@ -176,12 +189,15 @@ func problemSlug(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return strings.TrimPrefix(p.Type, "/problems/")
 }
 
+// Two callers in the principal format and a valid key (8+ visible ASCII characters).
 const (
 	alice = "user:0192a3b4-0000-7000-8000-000000000001"
 	bob   = "user:0192a3b4-0000-7000-8000-000000000002"
 	key1  = "key-00000001"
 )
 
+// TestReplayReturnsTheOriginalResponse: a repeated request gets the stored status, body and Location,
+// marked Idempotent-Replayed, and the handler runs once.
 func TestReplayReturnsTheOriginalResponse(t *testing.T) {
 	f := newFixture(accepted)
 	first := f.do(t.Context(), http.MethodPost, key1, alice, `{"name":"a"}`)
@@ -205,6 +221,8 @@ func TestReplayReturnsTheOriginalResponse(t *testing.T) {
 	}
 }
 
+// TestContractErrors: every rejection answers with its documented status and problem slug, and the
+// handler never runs.
 func TestContractErrors(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -251,6 +269,8 @@ func TestContractErrors(t *testing.T) {
 	}
 }
 
+// TestKeysAreScopedPerCaller: the same key from two callers runs twice and never replays across callers
+// (tenant isolation, 15-security §2).
 func TestKeysAreScopedPerCaller(t *testing.T) {
 	f := newFixture(accepted)
 	a := f.do(t.Context(), http.MethodPost, key1, alice, `{"name":"a"}`)
@@ -263,6 +283,7 @@ func TestKeysAreScopedPerCaller(t *testing.T) {
 	}
 }
 
+// TestFailuresReleaseTheKey: after a non-2xx answer the same key runs the handler again.
 func TestFailuresReleaseTheKey(t *testing.T) {
 	for _, status := range []int{400, 409, 429, 500, 503} {
 		f := newFixture(func(w http.ResponseWriter, r *http.Request, call int64) {
@@ -280,6 +301,8 @@ func TestFailuresReleaseTheKey(t *testing.T) {
 	}
 }
 
+// TestPanicReleasesTheKey: a panicking handler frees the key and the panic still propagates to the
+// platform server's recovery.
 func TestPanicReleasesTheKey(t *testing.T) {
 	f := newFixture(func(w http.ResponseWriter, r *http.Request, call int64) {
 		if call == 1 {
@@ -300,6 +323,8 @@ func TestPanicReleasesTheKey(t *testing.T) {
 	}
 }
 
+// TestInProgressThenStaleClaim: a live claim answers 409 + Retry-After; once older than staleAfter the
+// same request takes it over and runs.
 func TestInProgressThenStaleClaim(t *testing.T) {
 	f := newFixture(accepted)
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1/databases", nil)
@@ -317,6 +342,7 @@ func TestInProgressThenStaleClaim(t *testing.T) {
 	}
 }
 
+// TestExpiredKeyRunsAgain: after ttl a stored key is free for any request.
 func TestExpiredKeyRunsAgain(t *testing.T) {
 	f := newFixture(accepted)
 	f.do(t.Context(), http.MethodPost, key1, alice, `{"name":"a"}`)
@@ -328,6 +354,8 @@ func TestExpiredKeyRunsAgain(t *testing.T) {
 	}
 }
 
+// TestOneTimeSecretsAreNeverStored: a Cache-Control: no-store success isn't persisted, and its replay is
+// a 409 secret-not-replayable without re-running the handler.
 func TestOneTimeSecretsAreNeverStored(t *testing.T) {
 	f := newFixture(func(w http.ResponseWriter, _ *http.Request, _ int64) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -351,6 +379,7 @@ func TestOneTimeSecretsAreNeverStored(t *testing.T) {
 	}
 }
 
+// TestSafeMethodsPassThrough: GET needs no key and stores nothing.
 func TestSafeMethodsPassThrough(t *testing.T) {
 	f := newFixture(accepted)
 	for range 2 {

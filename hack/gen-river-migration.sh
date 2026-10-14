@@ -3,8 +3,10 @@
 # are created by goose like every other object (plan/04 Step 0.2) and live in schema dbcloud, owned by
 # dbcloud_migrator. Each River version becomes one goose statement block, because River's SQL contains
 # function bodies with semicolons. Also records the versions in river_migration so River's own tooling
-# agrees with goose. Requires: go (runs the River CLI at the version pinned in go.mod or RIVER_VERSION).
-# Rerun after a River upgrade and add the new versions as a new migration; never edit 00009 by hand.
+# agrees with goose. Requires: go and network access (`go run` fetches the River CLI at RIVER_VERSION,
+# default below, verified by sum.golang.org). Input: optional RIVER_VERSION. Overwrites 00009, so re-running
+# with the same version is a no-op. After a River upgrade add the new versions as a new migration; never edit
+# 00009 by hand.
 set -Eeuo pipefail
 trap 'echo "gen-river-migration: failed at line $LINENO" >&2' ERR
 
@@ -21,6 +23,8 @@ emit() {
       END { if (open) print "-- +goose StatementEnd" }'
 }
 
+# main: writes the Up and Down sections. `set local` keeps role and search_path changes inside goose's
+# transaction; the explicit resets matter because goose records the version in that same transaction.
 main() {
   local up down versions
   up="$(emit up)"

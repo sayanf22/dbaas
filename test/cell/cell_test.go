@@ -110,6 +110,7 @@ func randomName(t *testing.T, prefix string) string {
 		t.Fatal(err)
 	}
 	for i := range b {
+		// 256 is a multiple of 32, so the modulo picks every letter with equal probability.
 		b[i] = alphabet[int(b[i])%len(alphabet)]
 	}
 	return prefix + string(b)
@@ -185,6 +186,8 @@ func sql(t *testing.T, ns, statement string) string {
 // tcpFrom reports whether a TCP connection from the tenant's database pod to host:port succeeds within 5 s.
 func tcpFrom(t *testing.T, ns, host string, port int) bool {
 	t.Helper()
+	// host comes from the test table (constants and generated refs), never from outside input, so splicing
+	// it into the shell string is safe. bash's /dev/tcp avoids needing nc in the Postgres image.
 	probe := fmt.Sprintf("timeout 5 bash -c '</dev/tcp/%s/%d'", host, port)
 	_, err := kubectl(t, "-n", ns, "exec", "db-1", "-c", "postgres", "--", "bash", "-c", probe)
 	return err == nil
@@ -351,6 +354,8 @@ spec:
 	sql(t, src, "select pg_switch_wal()")
 	eventually(t, 3*time.Minute, "WAL segment "+segment+" in S3", func() bool {
 		last := sql(t, src, "select coalesce(last_archived_wal, '') from pg_stat_archiver")
+		// WAL file names are fixed-width upper-case hex (timeline, log, segment), so on one timeline the
+		// string order is the WAL order.
 		return last >= segment
 	})
 

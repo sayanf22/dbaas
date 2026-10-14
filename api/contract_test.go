@@ -7,6 +7,7 @@ package api_test
 import (
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,6 +28,7 @@ type operation struct {
 	def          node
 }
 
+// loadSpec reads and decodes openapi.yaml (tests run in api/) and fails the test unless it is OpenAPI 3.1.
 func loadSpec(t *testing.T) node {
 	t.Helper()
 	b, err := os.ReadFile("openapi.yaml")
@@ -43,6 +45,8 @@ func loadSpec(t *testing.T) node {
 	return spec
 }
 
+// operations lists every path + method of spec, sorted so failures are reported in a stable order.
+// Path-level `parameters` entries are skipped because they aren't operations.
 func operations(spec node) []operation {
 	var ops []operation
 	paths, _ := spec["paths"].(node)
@@ -76,8 +80,10 @@ func refs(v any) []string {
 	return out
 }
 
+// id returns the operationId, or "" when it is missing.
 func (o operation) id() string { s, _ := o.def["operationId"].(string); return s }
 
+// hasParam reports whether the operation references the shared parameter ref.
 func (o operation) hasParam(ref string) bool {
 	for _, r := range refs(o.def["parameters"]) {
 		if r == ref {
@@ -87,8 +93,10 @@ func (o operation) hasParam(ref string) bool {
 	return false
 }
 
+// responses returns the operation's responses by status code (nil when missing).
 func (o operation) responses() node { r, _ := o.def["responses"].(node); return r }
 
+// isPublic reports whether the operation is on the customer API (/v1) rather than /internal/v1.
 func (o operation) isPublic() bool { return strings.HasPrefix(o.path, "/v1/") }
 
 // TestTagsAreWellFormed catches flow-style YAML mistakes such as an unquoted comma splitting a tag
@@ -111,6 +119,8 @@ func TestTagsAreWellFormed(t *testing.T) {
 	}
 }
 
+// TestOperationsAreIdentifiedAndDocumented: every operation has a unique operationId (the generated
+// handler name), a summary and at least one tag.
 func TestOperationsAreIdentifiedAndDocumented(t *testing.T) {
 	seen := map[string]string{}
 	for _, o := range operations(loadSpec(t)) {
@@ -130,6 +140,8 @@ func TestOperationsAreIdentifiedAndDocumented(t *testing.T) {
 	}
 }
 
+// TestMutationsRequireIdempotencyKey: every public POST/PUT/PATCH/DELETE takes Idempotency-Key
+// (10-engineering-standards.md §4), except the webhook.
 func TestMutationsRequireIdempotencyKey(t *testing.T) {
 	for _, o := range operations(loadSpec(t)) {
 		mutating := o.method == "POST" || o.method == "PUT" || o.method == "PATCH" || o.method == "DELETE"
@@ -142,6 +154,8 @@ func TestMutationsRequireIdempotencyKey(t *testing.T) {
 	}
 }
 
+// TestDatabaseChangesAreAsynchronous: database creates and deletes answer 202 with the shared Accepted
+// response (Operation body + Location), and no 202 uses anything else (10-engineering-standards.md §7).
 func TestDatabaseChangesAreAsynchronous(t *testing.T) {
 	for _, o := range operations(loadSpec(t)) {
 		resp := o.responses()
@@ -157,6 +171,8 @@ func TestDatabaseChangesAreAsynchronous(t *testing.T) {
 	}
 }
 
+// TestErrorsAreProblemDetails: shared error responses are application/problem+json only, every 4xx/5xx
+// references one of them, and public operations declare 429 and 503 (load shedding, dependency down).
 func TestErrorsAreProblemDetails(t *testing.T) {
 	spec := loadSpec(t)
 	components := spec["components"].(node)["responses"].(node)
@@ -189,6 +205,8 @@ func TestErrorsAreProblemDetails(t *testing.T) {
 	}
 }
 
+// TestSecurityOfEveryOperation: internal operations require agent mTLS only, and only allow-listed
+// operations may opt out of authentication with `security: []`.
 func TestSecurityOfEveryOperation(t *testing.T) {
 	for _, o := range operations(loadSpec(t)) {
 		sec, explicit := o.def["security"].([]any)
@@ -205,6 +223,8 @@ func TestSecurityOfEveryOperation(t *testing.T) {
 	}
 }
 
+// TestListsArePaginated: a 200 body with next_cursor implies the shared Cursor and Limit parameters
+// (cursor pagination with a max page size, 10-engineering-standards.md §3).
 func TestListsArePaginated(t *testing.T) {
 	for _, o := range operations(loadSpec(t)) {
 		ok200, _ := o.responses()["200"].(node)
@@ -245,7 +265,7 @@ func TestSchemasAreClosedAndBounded(t *testing.T) {
 			}
 		case []any:
 			for i, e := range x {
-				walk(path+"["+string(rune('0'+i%10))+"]", e)
+				walk(path+"["+strconv.Itoa(i)+"]", e)
 			}
 		}
 	}

@@ -31,7 +31,7 @@ Checked 2026-09-29. Everything below is free to create; the "card" column says w
 | 9 | **GitHub OAuth App** (in the org) | "Sign in with GitHub" in Supabase Auth | free | no | `https://github.com/organizations/<org>/settings/applications` , https://supabase.com/docs/guides/auth/social-login/auth-github |
 | 10 | **Renovate** GitHub app | dependency, image-digest, K3s-version and action-SHA updates | free for private repos | no | https://github.com/apps/renovate |
 | 11 | **Razorpay** | subscriptions (UPI AutoPay, cards) | standard, ₹199 one-time KYC | no (PAN + bank account instead) | https://dashboard.razorpay.com/signup |
-| 12 | **VM provider** (Step 1.1, not now) | the three VMs of cell `c1` | chosen against the checklist in `03-…` §2.1, within ₹5,600/month | yes (at Step 1.1) | shortlist recorded in ADR-024 |
+| 12 | **VM provider** (Step 1.1, not now) | the starter VM of cell `c1` (4 vCPU / 16 GB, example Hostinger KVM 4), then the three VMs of the reference cell at Step 1.13 | chosen against the checklist in `03-…` §2.1, within ₹2,400/month for the starter VM and ₹5,600/month for the reference cell, at renewal prices | yes (at Step 1.1) | shortlist recorded in ADR-024 |
 
 You don't need: a Docker Hub paid plan, a GitHub paid plan, a Supabase paid plan (until its trigger), a Cloudflare paid plan, a Vercel account, or an AWS/GCP account.
 

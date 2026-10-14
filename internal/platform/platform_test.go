@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+// TestIsSensitiveKey checks the key matcher behind log redaction: case-insensitive substring matches
+// redact, ordinary keys pass.
 func TestIsSensitiveKey(t *testing.T) {
 	tests := []struct {
 		key  string
@@ -35,6 +37,8 @@ func TestIsSensitiveKey(t *testing.T) {
 	}
 }
 
+// TestNewLoggerRedacts checks that secret values never reach the JSON output, including inside a
+// group, while ordinary attributes and the service tag survive.
 func TestNewLoggerRedacts(t *testing.T) {
 	var buf bytes.Buffer
 	log := NewLogger(&buf, "test")
@@ -55,6 +59,7 @@ func TestNewLoggerRedacts(t *testing.T) {
 	}
 }
 
+// TestLoadServerConfig checks defaults, overrides and the fail-fast errors for malformed variables.
 func TestLoadServerConfig(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -82,6 +87,8 @@ func TestLoadServerConfig(t *testing.T) {
 	}
 }
 
+// TestHealthEndpoints checks that readiness starts off (zero value), follows SetReady, and that
+// liveness answers 200 regardless.
 func TestHealthEndpoints(t *testing.T) {
 	mux := http.NewServeMux()
 	h := &Health{}
@@ -104,6 +111,7 @@ func TestHealthEndpoints(t *testing.T) {
 	}
 }
 
+// TestRecoverPanics checks that a handler panic becomes a logged 500 instead of crashing the server.
 func TestRecoverPanics(t *testing.T) {
 	var buf bytes.Buffer
 	h := recoverPanics(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }), NewLogger(&buf, "test"))
@@ -117,6 +125,7 @@ func TestRecoverPanics(t *testing.T) {
 	}
 }
 
+// TestLimitBody checks that reading one byte past maxBodyBytes fails, so handlers can answer 413.
 func TestLimitBody(t *testing.T) {
 	h := limitBody(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.ReadAll(r.Body); err != nil {

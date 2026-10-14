@@ -16,9 +16,14 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 [lints.rust]
 unsafe_code = "forbid"
+# 10-engineering-standards.md §2: every item is documented. rustc's missing_docs only sees items
+# reachable from outside the crate, which a binary has none of, so clippy's private-items lint below
+# does the real work; both stay on in case the crate grows a library target.
+missing_docs = "warn"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+missing_docs_in_private_items = "warn"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
@@ -30,8 +35,11 @@ dbg_macro = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
 
+# Cargo profiles reference: https://doc.rust-lang.org/cargo/reference/profiles.html
+# panic stays at the default "unwind" on purpose: a panic in one connection task must be caught by
+# tokio and logged, not abort the process and drop every tenant's connections (30-rust.md).
 [profile.release]
 overflow-checks = true                # an arithmetic bug fails loudly instead of wrapping
-lto = "thin"
-codegen-units = 1
-strip = "symbols"
+lto = "thin"                          # cross-crate inlining at a fraction of fat LTO's build time
+codegen-units = 1                     # better optimisation of the hot relay path; slower builds are fine in CI
+strip = "symbols"                     # smaller image; removes the symbol table, not cargo-auditable's .dep-v0 section

@@ -5,7 +5,7 @@ Research date **2026-09-29**. This file lists only what we use. Pin exact versio
 Selection rules:
 1. Production-proven, actively maintained, clear security process.
 2. Official **amd64 and arm64** builds, because the VM provider isn't chosen yet and most value-VPS providers are x86_64.
-3. Small footprint: a cell is three VMs (`03-cost-model.md` §6), so every pod earns its place.
+3. Small footprint: a cell starts as one 4 vCPU / 16 GB VM and grows to three VMs (`03-cost-model.md` §6.1, §6), so every pod earns its place.
 4. Provider-neutral: runs on any Linux VM that passes the checklist in `03-…` §2.1; no managed service of one VM provider.
 5. Free at launch, or paid only from revenue; total platform cost ≤ ₹9,000/month.
 6. The same component still works at 100× scale, so growth means adding capacity, not replacing parts.
@@ -15,10 +15,16 @@ Selection rules:
 
 ## 1. Language split
 
+**Rule (ADR-027): Rust wherever it is the best tool, Go wherever it is the best tool.**
+- **Rust** for everything on the customer's connection or data path, and for anything latency- or memory-critical that runs per connection or per packet. Today that is pg-gateway (TLS termination, SNI/`options` routing, handshake relay, SCRAM channel-binding handling, cancel forwarding, caps and rate limits, route cache). Any future data-path proxy, parser of untrusted wire input, or per-node agent with a tight memory or latency budget is Rust too.
+- **Go** for the Kubernetes control plane and business logic, where Go has the mature, production-proven libraries: tenant-operator (controller-runtime + CNPG's published Go API types), cluster-agent (client-go), control-api (oapi-codegen strict server), worker (River's production implementation is Go), mcp-auth (zitadel/oidc, OpenID-certified), mcp-server (shares Go auth, store and `sqlsafety` code; the official Rust MCP SDK is the recorded alternative if MCP becomes latency-critical), CLI.
+- **Not ours to write:** PgBouncer stays the per-tenant pooler. CNPG's `Pooler` manages only PgBouncer, and the Rust poolers are either abandoned (PgCat) or a fast-moving 0.x under AGPL (PgDog).
+- Moving a component across the line needs an ADR with a measured reason (latency, memory, safety), not a preference.
+
 | Language | Where | Why |
 |---|---|---|
-| **Rust** (stable toolchain, edition 2024) | `pg-gateway` only — the Postgres TLS/SNI router every customer connection passes through | No GC pauses on the data path, low and predictable memory per connection, memory safety for an internet-facing TLS terminator, byte-level control of the Postgres handshake |
-| **Go 1.27.x** | control-api, worker, cluster-agent, tenant-operator, mcp-server, mcp-auth, CLI, provider adapters | Kubernetes, CNPG, River and MCP SDK are Go-native; one toolchain for the whole control plane; small static binaries |
+| **Rust** (stable toolchain, edition 2024) | `pg-gateway` (the Postgres TLS/SNI router every customer connection passes through) and any future data-path component under the rule above | No GC pauses on the data path, small fixed memory per connection, memory safety for an internet-facing TLS terminator, byte-level control of the Postgres handshake |
+| **Go 1.27.x** | control-api, worker, cluster-agent, tenant-operator, mcp-server, mcp-auth, CLI, provider adapters | client-go, controller-runtime, CNPG's API types, River, oapi-codegen, zitadel/oidc and the MCP Go SDK are the mature libraries here; one toolchain for the control plane; small static binaries |
 | **TypeScript** (Next.js 16, Node 24 LTS for builds) | public site, customer and admin dashboards | Static exports served free from Cloudflare |
 | **SQL** | goose migrations, sqlc queries | Admin DB schema |
 | **HCL** | Terraform | Cloudflare resources, and the VM provider's resources once it is chosen |
@@ -32,7 +38,7 @@ Selection rules:
 
 | Layer | Choice | Version | Why |
 |---|---|---|---|
-| VMs | Any provider passing `03-…` §2.1 (shortlisted in Step 0.0, chosen in Step 1.1; value-VPS class to meet the cap) | reference cell: 1 × 2 vCPU / 4 GB + 2 × 8 vCPU / 24 GB NVMe | Fixed monthly price; no provider-specific services used |
+| VMs | Any provider passing `03-…` §2.1 (shortlisted in Step 0.0, chosen in Step 1.1; value-VPS class to meet the cap) | starter cell: 1 × 4 vCPU / 16 GB / 200 GB NVMe (planning example Hostinger KVM 4, ADR-025); reference cell: 1 × 2 vCPU / 4 GB + 2 × 8 vCPU / 24 GB NVMe | Fixed monthly price; no provider-specific services used |
 | OS | **Ubuntu 24.04 LTS** | latest point release, unattended security updates | Long support, WireGuard in the kernel, lvm2, supported by K3s |
 | Kubernetes | **K3s**, 3 servers with **embedded etcd** | **v1.36.x** stable channel, pinned exactly (e.g. `v1.36.4+k3s1`) | CNCF-certified single-binary Kubernetes; HA control plane on our own VMs at no fee; the original blueprint's choice |
 | Container runtime | containerd (bundled with K3s) | bundled | Runs our Docker-built OCI images |
@@ -87,7 +93,7 @@ Selection rules:
 | Postgres operator | **CloudNativePG** | **1.30.1** (supports Kubernetes 1.34–1.36; adopt 1.31 after its release and a soak) | Declarative clusters, roles, databases, poolers, CNPG-I plugins, Lease-based primary election |
 | PostgreSQL | via CNPG `ClusterImageCatalog` | **18.6** (`ghcr.io/cloudnative-pg/postgresql:18.6-standard-trixie`, by digest) | Current major and minor. Built `--with-lz4 --with-zstd` (plus ICU, LLVM, libxml), checked with `pg_config --configure` in Step 0.3, so `wal_compression = lz4` is available |
 | Backups | **Barman Cloud Plugin** | **0.15.0** (Barman 3.20) | Official CNPG backup plugin; S3-compatible targets; sidecar resources and retention interval set per `ObjectStore` |
-| Pooler | PgBouncer via CNPG `Pooler` (one per tenant) | bundled | Per-tenant, operator-managed |
+| Pooler | PgBouncer via CNPG `Pooler` (one per tenant) | bundled | Per-tenant, operator-managed; the only pooler CNPG's `Pooler` supports (ADR-027) |
 | Local storage | **TopoLVM** on the NVMe volume group `tenantvg` | Helm chart **17.2.0** | Capacity-aware LVM CSI, thick volumes, online expansion |
 | Certificates | **cert-manager** + Let's Encrypt (DNS-01, Cloudflare solver) | **1.21.2** (cainjector kept: it injects the webhook's CA bundle) | Wildcard `*.db.example.com` |
 | Metrics | **VictoriaMetrics** single-node + vmagent + vmalert + Alertmanager, from Helm charts (no operator) | pin at install | Small footprint; vmagent discovers CNPG pods by label and scrapes etcd |
@@ -206,6 +212,7 @@ Must list both platforms for every image in the cell: CNPG operator + PostgreSQL
 - MCP Go SDK: https://github.com/modelcontextprotocol/go-sdk/releases ; MCP conformance: https://github.com/modelcontextprotocol/conformance
 - cedar-go: https://github.com/cedar-policy/cedar-go ; pg_query_go: https://github.com/pganalyze/pg_query_go
 - kube-rs: https://kube.rs ; Neon proxy: https://github.com/neondatabase/neon/tree/main/proxy
+- Language split (ADR-027, checked 2026-10-07): kube-rs is a CNCF Sandbox project since 2021-11-16 https://www.cncf.io/projects/kube-rs/ ; CNPG pooling is PgBouncer https://cloudnative-pg.io/docs/1.30/connection_pooling ; PgCat reported abandoned since ~May 2025 https://github.com/postgresml/pgcat/issues ; PgDog (Rust, AGPL-3.0) https://github.com/pgdogdev/pgdog ; River's Rust crate is at 0.3.0 (0.2.0 and 0.3.0 both published 2026-10-07) https://crates.io/crates/riverqueue , https://riverqueue.com/docs ; official Rust MCP SDK https://github.com/modelcontextprotocol/rust-sdk
 - cert-manager releases: https://cert-manager.io/docs/releases/ ; Flux: https://fluxcd.io
 - pnpm supply-chain settings: https://pnpm.io/supply-chain-security
 - Next.js 16 and static exports: https://nextjs.org/blog/next-16 , https://nextjs.org/docs/app/guides/static-exports , https://nextjs.org/docs/app/guides/content-security-policy , https://nextjs.org/docs/app/api-reference/config/eslint , https://nextjs.org/blog/next-security-release-program

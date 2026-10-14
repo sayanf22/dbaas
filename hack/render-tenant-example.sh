@@ -7,6 +7,7 @@ trap 'echo "render-tenant-example: failed at line $LINENO" >&2' ERR
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# main: renders one example tenant per plan, separated by YAML document markers.
 main() {
   local plan
   export S3_BUCKET="example-backups" S3_ENDPOINT="http://s3.example.invalid:8333"

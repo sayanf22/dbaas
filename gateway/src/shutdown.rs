@@ -9,11 +9,15 @@ use tokio_util::sync::CancellationToken;
 
 /// Waits for SIGTERM or SIGINT, then cancels `cancel`.
 ///
-/// Returns early without error if `cancel` is cancelled by someone else.
+/// Returns early without error if `cancel` is cancelled by someone else. The
+/// `select!` is `biased` so an already cancelled token wins over a pending
+/// signal. It runs once, not in a loop, so dropping the losing branches
+/// loses no state.
 ///
 /// # Errors
 ///
-/// Returns an error if the SIGTERM handler can't be registered.
+/// Returns an error if the SIGTERM handler can't be registered, or if
+/// listening for Ctrl-C fails.
 pub async fn wait_for_signal(cancel: CancellationToken) -> std::io::Result<()> {
     let mut term = signal(SignalKind::terminate())?;
     tokio::select! {
@@ -29,6 +33,7 @@ pub async fn wait_for_signal(cancel: CancellationToken) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Unit tests for the signal wait; they never send real signals to the test process.
 #[cfg(test)]
 mod tests {
     use super::*;

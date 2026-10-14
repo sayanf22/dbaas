@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+// TestNewPoolRejectsUnsafeConfig: NewPool fails fast, without connecting, on non-verify-full remote URLs,
+// a misused local exemption, connection counts outside the budget and an unknown pool mode.
 func TestNewPoolRejectsUnsafeConfig(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -17,6 +19,7 @@ func TestNewPoolRejectsUnsafeConfig(t *testing.T) {
 		{"loopback without the local exemption", PoolConfig{URL: "postgres://app@127.0.0.1:54329/postgres?sslmode=disable", Mode: TransactionPooler, MaxConns: 4}, ErrInsecureConnection},
 		{"MaxConns zero", PoolConfig{URL: "postgres://app@127.0.0.1/postgres?sslmode=verify-full", Mode: SessionPooler}, nil},
 		{"MaxConns over budget", PoolConfig{URL: "postgres://app@127.0.0.1/postgres?sslmode=verify-full", Mode: SessionPooler, MaxConns: 50}, nil},
+		{"keyword/value DSN (fails closed)", PoolConfig{URL: "host=db.example.com sslmode=verify-full", Mode: TransactionPooler, MaxConns: 4}, nil},
 		{"unknown mode", PoolConfig{URL: "postgres://app@127.0.0.1/postgres?sslmode=disable", MaxConns: 2, AllowInsecureLocal: true}, nil},
 	}
 	for _, tt := range tests {
@@ -35,6 +38,7 @@ func TestNewPoolRejectsUnsafeConfig(t *testing.T) {
 	}
 }
 
+// TestCheckTLSAllowsSafeConfig: verify-full anywhere, and loopback hosts with the local exemption, pass.
 func TestCheckTLSAllowsSafeConfig(t *testing.T) {
 	for _, cfg := range []PoolConfig{
 		{URL: "postgres://app@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=verify-full"},

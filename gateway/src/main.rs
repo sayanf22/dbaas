@@ -19,6 +19,11 @@ use tracing_subscriber::EnvFilter;
 /// Returns an error when the signal handlers can't be installed.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // JSON lines on stdout, collected by the cluster's log pipeline. `RUST_LOG`
+    // overrides the level; without it (or when it doesn't parse) the gateway
+    // logs at `info`, the production level, so a typo can't turn on debug
+    // logging on the data path. The current span is omitted because each
+    // event already carries the full span list.
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(

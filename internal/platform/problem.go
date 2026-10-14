@@ -13,9 +13,13 @@ const problemTypePrefix = "/problems/"
 // (api/openapi.yaml#/components/schemas/Problem). Detail is shown to clients: never put internal errors,
 // SQL, identifiers of other tenants or secrets in it.
 type Problem struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
+	// Type is the relative URI /problems/<slug> that identifies the error class; clients branch on it.
+	Type string `json:"type"`
+	// Title is a short, stable, human-readable summary of the type.
+	Title string `json:"title"`
+	// Status repeats the HTTP status code, as RFC 9457 §3.1.2 recommends.
+	Status int `json:"status"`
+	// Detail explains this occurrence and how to fix it; omitted when empty.
 	Detail string `json:"detail,omitempty"`
 }
 

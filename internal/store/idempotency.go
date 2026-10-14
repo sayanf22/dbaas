@@ -63,7 +63,9 @@ func (s *Idempotency) Reclaim(ctx context.Context, principal, key string, reques
 	return n == 1, nil
 }
 
-// Complete stores the final response once; completing an already completed claim changes nothing.
+// Complete stores the final response of the in-progress claim with requestHash, at most once. When no
+// such claim exists (already completed, released, or reclaimed by a newer request after going stale) it
+// changes nothing and returns ErrClaimLost, so the caller knows the response was not stored.
 func (s *Idempotency) Complete(ctx context.Context, principal, key string, requestHash []byte, statusCode int, response []byte) error {
 	if statusCode < 200 || statusCode > 599 || statusCode > math.MaxInt16 {
 		return fmt.Errorf("store: status code %d outside 200..599", statusCode)

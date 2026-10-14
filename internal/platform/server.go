@@ -17,10 +17,11 @@ const (
 	defaultReadHeaderTimeout = 5 * time.Second
 	// defaultReadTimeout bounds reading a whole request; bodies are ≤ 1 MiB.
 	defaultReadTimeout = 30 * time.Second
-	// defaultWriteTimeout stays below Cloudflare's 100 s proxy timeout so our
-	// error, not Cloudflare's, reaches the client.
+	// defaultWriteTimeout stays well below Cloudflare's Proxy Read Timeout (125 s by default,
+	// Cloudflare error 524 docs) so our error, not Cloudflare's 524, reaches the client.
 	defaultWriteTimeout = 60 * time.Second
-	// defaultIdleTimeout keeps keep-alive connections from cloudflared cheap to reuse.
+	// defaultIdleTimeout keeps keep-alive connections from cloudflared open for 120 s between
+	// requests so they are cheap to reuse, while still reclaiming abandoned ones.
 	defaultIdleTimeout = 120 * time.Second
 	// defaultMaxHeaderBytes is 64 KiB: enough for JWTs and cookies, far below Go's 1 MiB default.
 	defaultMaxHeaderBytes = 64 << 10
@@ -34,16 +35,25 @@ const (
 	defaultDrainTimeout = 20 * time.Second
 )
 
-// ServerConfig holds the listener address and HTTP server limits.
+// ServerConfig holds the listener address and HTTP server limits. Build it with
+// DefaultServerConfig or LoadServerConfig; the zero value has no timeouts and must not be served.
 type ServerConfig struct {
-	Addr              string
+	// Addr is the TCP listen address (host:port), from LISTEN_ADDR.
+	Addr string
+	// ReadHeaderTimeout bounds reading request headers (slow-loris protection, gosec G112).
 	ReadHeaderTimeout time.Duration
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	MaxHeaderBytes    int
-	ShutdownDelay     time.Duration
-	DrainTimeout      time.Duration
+	// ReadTimeout bounds reading the whole request, body included.
+	ReadTimeout time.Duration
+	// WriteTimeout bounds writing the response, measured from the end of the header read.
+	WriteTimeout time.Duration
+	// IdleTimeout bounds how long a keep-alive connection waits for its next request.
+	IdleTimeout time.Duration
+	// MaxHeaderBytes caps request line + headers, in bytes.
+	MaxHeaderBytes int
+	// ShutdownDelay is how long Serve keeps accepting after readiness turns off, from SHUTDOWN_DELAY.
+	ShutdownDelay time.Duration
+	// DrainTimeout bounds waiting for in-flight requests after accepting stops, from DRAIN_TIMEOUT.
+	DrainTimeout time.Duration
 }
 
 // DefaultServerConfig returns the limits above, listening on :8080.

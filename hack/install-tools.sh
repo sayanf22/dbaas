@@ -24,6 +24,9 @@ load_versions() {
 
 # Tools requested on the command line; empty means all.
 selected=()
+# Download directory of the archive being installed; global so the EXIT trap removes it on failure too.
+work=""
+trap '[[ -z "$work" ]] || rm -rf "$work"' EXIT
 
 # wanted <binary>: true when no tools were named or <binary> is one of them.
 wanted() {
@@ -58,21 +61,24 @@ go_tool() {
 # archive_tool <binary> <version> <archive-url> <checksum-url> [member]: verifies, extracts, installs.
 # The checksum file is either a list ("<sha>  <name>") or a single "<sha>" for one archive.
 archive_tool() {
-  local name="$1" version="$2" url="$3" sums_url="$4" member="${5:-$1}" work file want
+  local name="$1" version="$2" url="$3" sums_url="$4" member="${5:-$1}" file want
   wanted "$name" || return 0
   if have "$name" "$version"; then echo "ok   $name"; return; fi
   work="$(mktemp -d)"
   file="${work}/$(basename "$url")"
+  # curl -f fails on HTTP errors instead of saving an error page; nothing is extracted before the check.
   curl -fsSL -o "$file" "$url"
   want="$(curl -fsSL "$sums_url" | awk -v n="$(basename "$url")" 'NF == 1 { print $1; exit } { f = $2; sub(/^\*/, "", f); sub(/^.*\//, "", f) } f == n { print $1; exit }')"
-  [[ -n "$want" ]] || { echo "install-tools: no checksum for $(basename "$url")" >&2; rm -rf "$work"; return 1; }
+  [[ -n "$want" ]] || { echo "install-tools: no checksum for $(basename "$url")" >&2; return 1; }
   echo "${want}  ${file}" | sha256sum -c --quiet -
   tar -xzf "$file" -C "$work"
   install -m 0755 "$(find "$work" -type f -name "$member" | head -n 1)" "${bin_dir}/${name}"
   rm -rf "$work"
+  work=""
   echo "new  $name $version"
 }
 
+# main [tool...]: installs the selected (default: all) pinned tools into ~/.local/bin.
 main() {
   selected=("$@")
   load_versions

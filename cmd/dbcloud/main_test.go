@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// TestRun checks the exit codes and output of the Step 0.1 command set: `version` prints the build
+// version, anything else prints usage to stderr and exits 2 (the conventional "bad usage" code).
 func TestRun(t *testing.T) {
 	tests := []struct {
 		args     []string

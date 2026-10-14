@@ -112,7 +112,8 @@ func appPool(ctx context.Context, t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// quoteLiteral quotes a test-generated password for ALTER ROLE, which can't take a bind parameter.
+// quoteLiteral quotes a test-generated password for ALTER ROLE, which can't take a bind parameter. The
+// input is hex plus a fixed suffix, never user data; doubling quotes is the SQL standard escape.
 func quoteLiteral(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
 // TestRepeatedPostReturnsOriginalResponse is the Step 0.2 "Done when" check against the real admin DB:

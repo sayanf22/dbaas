@@ -20,7 +20,11 @@ state=/var/lib/dbcloud-local
 # platform's volumes; sparse, so only written data uses real disk.
 loop_size=100G
 lvmd_bin=/usr/local/sbin/lvmd
+# Candidate sudoers file during setup; global so the EXIT trap removes it on every exit path.
+sudoers_tmp=""
+trap '[[ -z "$sudoers_tmp" ]] || rm -f "$sudoers_tmp"' EXIT
 
+# die <message>: prints the message to stderr and exits 2.
 die() { echo "local-host: $*" >&2; exit 2; }
 
 # check_node <name>: node names come from hack/cell.sh (k3d-<cell>-<role>-<n>); allow-list them.
@@ -29,6 +33,7 @@ check_node() { [[ "$1" =~ ^k3d-[a-z0-9-]{1,40}$ ]] || die "invalid node name: $1
 # vg_of <node>: VG names are host-global, so each node gets its own.
 vg_of() { printf 'tenantvg-%s' "${1#k3d-}"; }
 
+# setup [user]: one-time host preparation (modules, packages, lvmd, systemd unit, root-owned copy, sudoers).
 setup() {
   [[ $EUID -eq 0 ]] || die "run as root (wsl -u root)"
   local user="${1:-dev}"
@@ -48,13 +53,13 @@ setup() {
   write_unit
   # Root-owned copy + a sudoers rule limited to its data-path commands (node names are validated inside).
   install -m 0755 -o root -g root "${BASH_SOURCE[0]}" /usr/local/sbin/dbcloud-local-host
-  local rule=/etc/sudoers.d/dbcloud-local tmp
-  tmp="$(mktemp)"
+  local rule=/etc/sudoers.d/dbcloud-local
+  sudoers_tmp="$(mktemp)"
   printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/dbcloud-local-host lvm-up *, /usr/local/sbin/dbcloud-local-host lvm-down *, /usr/local/sbin/dbcloud-local-host status\n' \
-    "$user" >"$tmp"
-  visudo -cq -f "$tmp" || { rm -f "$tmp"; die "generated sudoers rule is invalid"; }
-  install -m 0440 -o root -g root "$tmp" "$rule"
-  rm -f "$tmp"
+    "$user" >"$sudoers_tmp"
+  # visudo validates before install: a broken file in /etc/sudoers.d would disable sudo for everyone.
+  visudo -cq -f "$sudoers_tmp" || die "generated sudoers rule is invalid"
+  install -m 0440 -o root -g root "$sudoers_tmp" "$rule"
   echo "setup: modules load at boot, lvm2/xfsprogs present, lvmd installed, $user may run dbcloud-local-host lvm-up/lvm-down/status"
 }
 
@@ -79,6 +84,7 @@ EOF
   systemctl daemon-reload
 }
 
+# lvm_up <node>...: per node, ensures the loop file, VG, lvmd config and running lvmd unit. Idempotent.
 lvm_up() {
   [[ $EUID -eq 0 ]] || die "run as root (wsl -u root)"
   [[ -x "$lvmd_bin" ]] || die "run 'local-host.sh setup' first"
@@ -110,6 +116,7 @@ EOF
   done
 }
 
+# lvm_down <node>...: stops lvmd and destroys the node's VG and loop file (all its local volumes). Idempotent.
 lvm_down() {
   [[ $EUID -eq 0 ]] || die "run as root (wsl -u root)"
   local node vg img loop
@@ -126,12 +133,14 @@ lvm_down() {
   done
 }
 
+# status: read-only summary of tenant VGs, lvmd units and loop devices.
 status() {
   vgs --noheadings -o vg_name,vg_size,vg_free 2>/dev/null | grep tenantvg- || echo "no tenant VGs"
   systemctl list-units --no-legend 'dbcloud-lvmd@*' 2>/dev/null || true
   losetup -a | grep "$state" || echo "no loop devices"
 }
 
+# main <command> [args]: dispatches to the allow-listed subcommands.
 main() {
   local cmd="${1:-}"
   shift || true

@@ -1,13 +1,13 @@
 # 01 — Architecture (Blueprint 4.0)
 
-Status: implementation-ready reference architecture, revised 2026-09-29.
+Status: implementation-ready reference architecture, revised 2026-09-29; starter-VM size, gateway performance targets and the language rule revised 2026-10-07.
 Blueprint 4.0 returns to **K3s**, the Kubernetes distribution of the original PDF, and makes the design **provider-neutral**: cells run on plain Linux VMs from any provider that passes the checklist in `03-cost-model.md` §2. No provider is chosen yet. The PDF's product rules (tenant model, invariants, MCP permission model, acceptance gates) still apply. Costs and capacity numbers live in `03-cost-model.md`.
 
 ---
 
 ## 0. One-paragraph summary
 
-Customer PostgreSQL databases run on **our own machines**: a **cell** of three Linux VMs in one region, running **K3s** with a three-member embedded etcd. One small VM (2 vCPU / 4 GB) runs only the Kubernetes control plane; two larger VMs (8 vCPU / 24 GB, local NVMe) run the control plane too, plus the platform and the tenants. Each cell has its own Rust **pg-gateway**, Cloudflare Tunnel and R2 backup bucket. One **control plane** written in Go decides what should exist; it keeps **only its own admin/management data** in **Supabase** (Free, then Pro) and signs users in with **Supabase Auth**. It never stores or proxies customer rows. Cloudflare's free plan fronts all HTTP traffic (Tunnel, WAF, Access, Turnstile, the Next.js static site and dashboards), serves DNS and stores backups in **R2**. Customer Postgres traffic never passes through Cloudflare's proxy; clients connect straight to the gateway on the nodes' public IPs. The platform costs ≤ ₹9,000/month. Growth adds nodes, then cells (on the same or another provider, including AWS or GCP later) with the same code; each paid step is taken only when revenue already covers it.
+Customer PostgreSQL databases run on **our own machines**: a **cell** of three Linux VMs in one region, running **K3s** with a three-member embedded etcd. One small VM (2 vCPU / 4 GB) runs only the Kubernetes control plane; two larger VMs (8 vCPU / 24 GB, local NVMe) run the control plane too, plus the platform and the tenants. **Launch runs on the starter cell (ADR-025):** one 4 vCPU / 16 GB / 200 GB NVMe VM (planning example: Hostinger KVM 4) runs a single K3s server with embedded etcd, one replica of every platform component and ≈ 12 `base` tenants; it grows into the three-VM reference cell at Step 1.13 with the same code and config (`03-…` §6.1). Each cell has its own Rust **pg-gateway**, Cloudflare Tunnel and R2 backup bucket. One **control plane** written in Go decides what should exist; it keeps **only its own admin/management data** in **Supabase** (Free, then Pro) and signs users in with **Supabase Auth**. It never stores or proxies customer rows. Cloudflare's free plan fronts all HTTP traffic (Tunnel, WAF, Access, Turnstile, the Next.js static site and dashboards), serves DNS and stores backups in **R2**. Customer Postgres traffic never passes through Cloudflare's proxy; clients connect straight to the gateway on the nodes' public IPs. The platform costs ≤ ₹9,000/month. Growth adds nodes, then cells (on the same or another provider, including AWS or GCP later) with the same code; each paid step is taken only when revenue already covers it.
 
 ---
 
@@ -32,7 +32,9 @@ Customer PostgreSQL databases run on **our own machines**: a **cell** of three L
 | HA (Phase 3: primary + replica on different nodes) | 99.9 % | 0 (sync option) – ≤ 1 min | ≤ 1 min (failover) |
 | HA + DR (Phase 4: replica cell in another region) | 99.9 % + region survival | ≤ 1 min cross-region | ≤ 30 min region failover |
 
-What survives what, from launch:
+What survives what on the **starter cell** (launch until Step 1.13): nothing survives the loss of its one VM. Running databases stop until a replacement VM is bootstrapped and every tenant restores from R2 (RTO measured in the node-loss drill); OS reboots interrupt every tenant in the announced window. Control-plane, Supabase and Cloudflare outages are still survived (static stability, invariant 4).
+
+What survives what on the **reference cell** (from Step 1.13):
 - **Any one VM lost:** the Kubernetes control plane keeps quorum (2 of 3 etcd members) and the platform keeps running (every stateless service has 2 replicas, one per node). Tenants on the lost node restore from R2 onto its replacement.
 - **Both large nodes lost, or the whole provider region:** tenants restore from R2 into a rebuilt or new cell (runbook `RebuildCell`); nothing is lost beyond each plan's RPO.
 
@@ -62,7 +64,7 @@ flowchart TB
     AUTH["Supabase Auth: sign-in, MFA, Turnstile"]
   end
 
-  subgraph CELL["Cell c1 = one K3s cluster: 3 VMs, one region, private network (WireGuard between nodes)"]
+  subgraph CELL["Reference cell c1 (from Step 1.13) = one K3s cluster: 3 VMs, one region, private network (WireGuard between nodes)"]
     CP["cp-1: 2 vCPU / 4 GB — K3s server (etcd), control plane only"]
     subgraph N1["node-1: 8 vCPU / 24 GB NVMe — K3s server (etcd) + workloads"]
       GW1["pg-gateway :5432 (hostPort)"]
@@ -97,7 +99,7 @@ flowchart TB
   CP -->|"etcd snapshots"| R2
 ```
 
-"Platform replica set" = control-api, worker, mcp-server, mcp-auth, tenant-operator, cloudflared, observability and cell add-ons, spread across both nodes (§5.2).
+"Platform replica set" = control-api, worker, mcp-server, mcp-auth, tenant-operator, cloudflared, observability and cell add-ons, spread across both nodes (§5.2). At launch the cell is the starter cell: `node-1` alone with one platform replica set and one A record (§5.2, ADR-025).
 
 The control plane is stateless (its state is in Supabase), so it runs inside the cell. From Phase 4 it runs **active-active in two cells**: each cell has its own tunnel, and Cloudflare Load Balancing (paid add-on, bought when Phase 4 is funded) spreads `api.`/`mcp.`/`oauth.` across both.
 
@@ -117,15 +119,15 @@ The control plane is stateless (its state is in Supabase), so it runs inside the
 
 | Component | Language | Why |
 |---|---|---|
-| `pg-gateway` (Postgres TLS/SNI router on the data path) | **Rust** (tokio, rustls, kube-rs) | Every customer connection passes through it. No GC pauses, low memory per connection, memory safety for an internet-facing TLS terminator, precise control of the Postgres handshake. Same choice as Neon's proxy. |
-| control-api, worker, cluster-agent, provider adapters | **Go** | Kubernetes SDKs are Go-native; River is Go; one toolchain |
-| tenant-operator | **Go** (controller-runtime) | CloudNativePG and the operator ecosystem are Go |
-| mcp-server | **Go** (official MCP Go SDK) | Supports MCP spec 2026-07-28 |
+| `pg-gateway` (Postgres TLS/SNI router on the data path) | **Rust** (tokio, rustls, kube-rs) | Every customer connection passes through it: TLS termination, SNI/`options` routing, handshake relay, SCRAM channel-binding handling, cancel forwarding, caps and rate limits, route cache. No GC pauses, small fixed memory per connection, memory safety for an internet-facing TLS terminator, byte-level control of the Postgres handshake. Same choice as Neon's proxy. |
+| control-api, worker, cluster-agent, provider adapters | **Go** | client-go and oapi-codegen are the mature libraries; River's production implementation is Go; one toolchain for the control plane |
+| tenant-operator | **Go** (controller-runtime) | CloudNativePG publishes its API types in Go, and controller-runtime is the reference for CNPG operators |
+| mcp-server | **Go** (official MCP Go SDK) | Supports MCP spec 2026-07-28 and shares Go auth, store and `sqlsafety` code with control-api and mcp-auth; the official Rust SDK (`rmcp`) is the recorded alternative if MCP becomes latency-critical |
 | mcp-auth | **Go** (zitadel/oidc, OpenID-certified library) | Standards-heavy, security-sensitive; use a certified protocol library |
 | CLI `dbcloud` | **Go** (cobra) | Single static binary for every OS |
 | Web apps: public site, customer dashboard, admin dashboard | **TypeScript** (Next.js 16 App Router, **static export**) | Built to static files and served free from Cloudflare Workers Static Assets; no server code, so none of Next.js's server-side vulnerabilities apply |
 
-Rule: Rust only where the process sits on the per-connection data path. Everything else on the backend is Go. Every backend component ships as a multi-arch (`linux/amd64` + `linux/arm64`) container image built with Docker Buildx and stored in ghcr.io; K3s runs the images with containerd. The web apps ship as static files.
+Rule (ADR-027): **Rust** for everything on the customer's connection or data path, and for anything latency- or memory-critical that runs per connection or per packet: pg-gateway today; any future data-path proxy, parser of untrusted wire input, or per-node agent with a tight memory or latency budget. **Go** for the Kubernetes control plane and business logic, where Go has the mature, production-proven libraries. A component that moves across that line gets an ADR first. PgBouncer stays the per-tenant pooler (CNPG's `Pooler` manages only PgBouncer). Every backend component ships as a multi-arch (`linux/amd64` + `linux/arm64`) container image built with Docker Buildx and stored in ghcr.io; K3s runs the images with containerd. The web apps ship as static files.
 
 ---
 
@@ -134,7 +136,7 @@ Rule: Rust only where the process sits on the per-connection data path. Everythi
 ### 4.1 Provider (not chosen yet)
 
 - Any provider that passes the VM checklist (`03-…` §2.1): India region or ≤ 70 ms from Indian users, KVM, local NVMe with room for LVM, **free private network**, a public IPv4 per VM, ≥ 3 TB/month included transfer, flat monthly price, and good fio/fsync and CPU-steal numbers in spike S2.
-- Only the value-VPS class fits the ₹9,000 cap with a useful cell (`03-…` §2.2). Providers are shortlisted in build-plan Step 0.0, chosen in Step 1.1 after spike S2, and recorded in ADR-024.
+- Only the value-VPS class fits the ₹9,000 cap with a useful cell (`03-…` §2.2). Providers are shortlisted in build-plan Step 0.0, chosen in Step 1.1 after spike S2, and recorded in ADR-024. The shortlisted example for the starter VM is **Hostinger KVM 4** (Mumbai); whether it offers a private network for the reference cell is still open (`03-…` §2.2).
 - A cell never spans providers or regions: K3s supports embedded etcd only with all servers on one private network in one location, and cross-provider traffic is slow, fragile and billed (`03-…` §2.3). AWS, GCP or another region become **separate cells** later.
 
 ### 4.2 Network per cell
@@ -160,7 +162,7 @@ Rule: Rust only where the process sits on the per-connection data path. Everythi
 
 - **K3s v1.36** (stable channel, pinned to an exact release such as `v1.36.4+k3s1`), tracking Kubernetes 1.36, which CloudNativePG 1.30 supports. K3s is a CNCF-certified Kubernetes distribution; CNPG officially targets vanilla Kubernetes, so spike S1 runs the Kubernetes conformance suite and the CNPG e2e smoke tests on the pinned K3s.
 - OS: Ubuntu 24.04 LTS on every VM, unattended security updates (reboots scheduled, §12.3), sysctls from the K3s CIS hardening guide.
-- **Datastore: embedded etcd, three servers** (`cp-1`, `node-1`, `node-2`) on the private network. etcd snapshots every 6 h, 28 kept, compressed, copied to R2 (`--etcd-s3-*`, region `auto`). The K3s server token is stored in the password manager, because restoring a snapshot needs it.
+- **Datastore: embedded etcd, three servers** (`cp-1`, `node-1`, `node-2`) on the private network; one server (`node-1`, `cluster-init`) on the starter cell. etcd snapshots every 6 h, 28 kept, compressed, copied to R2 (`--etcd-s3-*`, region `auto`). The K3s server token is stored in the password manager, because restoring a snapshot needs it.
 - **Bundled components:** Traefik, ServiceLB and local-path-provisioner are disabled (`--disable=traefik,servicelb,local-storage`); CoreDNS (2 replicas) and metrics-server are kept.
 - **Networking:** flannel `wireguard-native` (§4.2); **K3s's embedded network-policy controller (kube-router)** enforces Kubernetes NetworkPolicy, so no separate CNI or policy engine is installed. Spike S1 verifies the policies we rely on (default deny, namespace selectors, `ipBlock` with `except`, egress).
 - **Registry:** images come from ghcr.io (private) with a read-only token in `/etc/rancher/k3s/registries.yaml`; K3s's embedded registry mirror (**Spegel**, `--embedded-registry`) lets nodes pull images from each other, so a ghcr.io outage doesn't block restarts of images already in the cell. Images are referenced by digest.
@@ -175,7 +177,9 @@ Rule: Rust only where the process sits on the per-connection data path. Everythi
 | `node-1`, `node-2` | 8 vCPU / 24 GB (32 GB if the ceiling allows), ≥ 200 GB NVMe | K3s servers (etcd members) + platform + tenants | `dbcloud.io/pool=tenant`, `topology.kubernetes.io/zone` = provider zone or node name |
 | `node-3…` (growth) | same shape | K3s **agents** (no etcd) + tenants | `dbcloud.io/pool=tenant` |
 
-- Every platform Deployment has 2 replicas with a `topologySpreadConstraints` rule across `node-1`/`node-2`; singletons (cluster-agent, River UI) are stateless and reschedule within seconds.
+**Starter cell (ADR-025, launch until Step 1.13):** only `node-1`, 4 vCPU / 16 GB / 200 GB NVMe (planning example: Hostinger KVM 4, `03-…` §2.2), a single K3s server started with `cluster-init` so that `cp-1` and `node-2` can join its etcd later without a rebuild. Same bootstrap, K3s config, labels and manifests; platform Deployments run 1 replica. At Step 1.13 the starter VM is resized to the reference shape where the provider allows it, or stays a smaller `node-1` and `03-…` §6 is recomputed.
+
+- On the reference cell every platform Deployment has 2 replicas with a `topologySpreadConstraints` rule across `node-1`/`node-2`; singletons (cluster-agent, River UI) are stateless and reschedule within seconds.
 - Disk layout on `node-*`: root filesystem (OS, containerd, K3s, etcd) ≈ 50 GB; the rest of the NVMe is an LVM physical volume in volume group **`tenantvg`**, created by the node bootstrap. K3s recommends a separate disk for etcd; with one disk per node, spike S2 measures etcd fsync p99 under full tenant load, and alerts fire at 10 ms.
 - Nodes are created by `deploy/terraform/modules/vm-<provider>` when the provider has a Terraform provider, otherwise by hand from the same cloud-init file; either way the node bootstrap (`deploy/node-bootstrap/`) is identical and idempotent.
 
@@ -323,6 +327,18 @@ A **DaemonSet on every tenant node** in namespace `dbcloud-edge`, listening on `
 | Cancel requests | the gateway replaces `BackendKeyData` with its own key, which encodes the issuing replica ID and an HMAC (in the process-ID field for protocol 3.0, in the longer key for 3.2). libpq sends a cancel to the address its session used, so it normally reaches the issuing replica; if not, the receiving replica verifies the HMAC and forwards it over internal mTLS to the owner |
 | Keepalive and drain | TCP keepalive 60 s towards clients and backends. Shutdown: fail readiness → stop accepting → drain existing sessions up to 10 min → send `57P01` → exit |
 | Operations | Prometheus metrics per tenant (capped series), structured tracing logs |
+
+**Performance targets** (targets to verify in Step 0.5 on k3d and spike S3 on the real VM, not measurements). Basis: the plan's existing 10k-connection and 32 Mi targets, and a 2026 localhost benchmark where PgBouncer added ≈ 0.05 ms and PgDog (Rust) ≈ 0.07 ms per SELECT on top of a 0.06 ms direct round trip (Sources). After the handshake the gateway only relays bytes, so its steady-state cost should sit below a pooler's.
+
+| Metric | Target | How it is measured |
+|---|---|---|
+| Added steady-state latency per round trip, same node | p50 ≤ 0.1 ms, p99 ≤ 0.5 ms | `pgbench -S` through the `-direct` hostname vs straight to the pod IP, same `sslmode`, 4 and 64 clients |
+| Added connection set-up time (TLS 1.3 + startup + route lookup + upstream dial + SCRAM relay) | p99 ≤ 5 ms | `pgbench -C` (new connection per transaction) through the gateway vs the pod IP |
+| Concurrent connections per node | ≥ 10,000 held open, global cap enforced beyond that | load test in S3 |
+| Memory | ≤ 32 Mi per pod at idle; ≤ 64 KiB per relayed connection (two fixed 8 KiB relay buffers + TLS state) | container working set at 0 and 10,000 connections |
+| Route propagation | a new or changed `TenantDatabase` routable in ≤ 2 s at p99 | watch event to first successful connect |
+
+At 10,000 connections the per-connection target means up to ≈ 625 MiB (10,000 × 64 KiB) per gateway, far above the 32 Mi idle request in `03-…` §6. Step 0.5 therefore derives the per-node global connection cap from the measured per-connection memory and the pod's memory limit, and any limit raise updates `03-…` §6 in the same PR. Legitimate demand is bounded by the per-tenant caps (100 pooled clients per `base` tenant, `03-…` §4, plus 10 direct, §6.2), so ≈ 12 starter tenants need at most ≈ 1,320 connections.
 
 Known limit, documented for customers: `channel_binding=require` is not supported, because TLS ends at the gateway (the default `prefer` works on both hostnames).
 
@@ -589,16 +605,21 @@ Per-language secure-coding rules are in `.kiro/steering/` and summarized in `07-
 
 ## 19. Scalability estimates
 
+No tier has a single-VM ceiling for the product as a whole: the starter VM is only the first node of cell `c1`. Each tier scales on its own axis:
+
 | Dimension | First target | How it grows without redesign | Evidence / basis |
 |---|---|---|---|
+| Tenants on the starter cell (launch) | ~12 `base`, ~7 `plus` or ~4 `premium` | grow into the reference cell (Step 1.13) | `03-…` §6.1 |
 | Tenants per reference cell | ~47 `base`, ~27 `plus` or ~15 `premium` | growth nodes | `03-…` §6 |
-| Tenants per added node (8 vCPU / 24 GB) | ~25 `base` | more nodes | `03-…` §6–§7 |
+| Customer connections (data path) | pg-gateway: target ≥ 10k concurrent per node, one gateway per tenant node | every added tenant node brings its own gateway and A record, so connection capacity grows with nodes | §8.2 targets, measured in S3; Supavisor reached 250k connections on one 16-core ARM node |
+| Pooled connections per tenant | one PgBouncer pod per tenant (100–400 clients by plan onto a small server pool) | scales with tenants; HA plans get 2 PgBouncer pods (Phase 3) | `03-…` §4–§5 |
+| Control-plane services | 1 replica each on the starter cell, 2 on the reference cell; stateless | more replicas per cell, then active-active across two cells (Phase 4) | §10, ADR-019 |
+| Tenants per added reference-shape node (8 vCPU / 24 GB) | ~25 `base` | more nodes | `03-…` §6–§7 |
 | Tenants per cell | ≤ 1,500 | more cells | Neon's Kubernetes limit experience (~10k DBs/cluster) |
 | Nodes per cell | ≤ 50 | more cells | K3s server sizing (2 vCPU / 4 GB servers handle up to 350 agents) |
 | Cells | 1 → 2 (another region) → more (any provider, incl. AWS/GCP) | cell registry row + agent install | cells are independent K3s clusters |
 | Job throughput | < 100 jobs/s needed | more worker replicas, bigger Supabase compute | River benchmarks ~46k jobs/s |
 | Admin DB | Supabase Free (Nano, 60 connections, 30 used) | Pro → larger compute → read replica for dashboards | §10.2 budget |
-| Gateway connections | target ≥ 10k concurrent per node (load-tested) | more tenant nodes, each with a gateway | Supavisor reached 250k connections on one 16-core ARM node |
 | DNS records | 1 wildcard with one A record per tenant node | explicit records only for moved tenants; Pro zone at > 200 records | Cloudflare DNS limits |
 | Backup storage | 10 GB R2 free, then ₹1.44/GB-month | pay per GB from revenue | R2 pricing |
 
@@ -608,6 +629,7 @@ Per-language secure-coding rules are in `.kiro/steering/` and summarized in `07-
 
 | Failure | Response |
 |---|---|
+| Starter VM lost (launch, before Step 1.13) | Every tenant is down; a replacement VM is bootstrapped, K3s restores from the latest etcd snapshot in R2 (or starts fresh), Flux reapplies the platform, and every tenant restores from R2; the worker updates the A record if the IP changed; RTO measured in the node-loss drill |
 | One tenant node lost | Control plane keeps quorum; platform keeps serving from the other node; clients fail over to the other A record; the worker removes the dead node's record; a replacement VM joins; tenants restore from R2; RTO measured in the drill |
 | `cp-1` lost | Quorum kept by `node-1` + `node-2`; a new `cp-1` joins from bootstrap (etcd member replaced) |
 | Two of three servers lost (quorum lost) | Running pods keep serving; no changes possible; restore quorum from the surviving member or the latest etcd snapshot in R2 (runbook) |
@@ -641,3 +663,9 @@ Per-language secure-coding rules are in `.kiro/steering/` and summarized in `07-
 - River and PgBouncer: https://riverqueue.com/docs/pgbouncer
 - MCP authorization 2026-07-28: https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization
 - AWS cell-based architecture: https://docs.aws.amazon.com/wellarchitected/latest/reducing-scope-of-impact-with-cell-based-architecture/what-is-a-cell-based-architecture.html
+
+Added 2026-10-07:
+- Proxy latency overhead (PgBouncer 1.25, PgDog, SPQR vs direct Postgres, localhost, Feb 2026): https://gitlab.com/postgres-ai/postgresql-consulting/tests-and-benchmarks/-/issues/72
+- tokio relay buffers (`copy_bidirectional_with_sizes`; default 8 KiB): https://docs.rs/tokio/latest/tokio/io/fn.copy_bidirectional_with_sizes.html , https://github.com/tokio-rs/tokio/issues/3722
+- Language split evidence (ADR-027): kube-rs CNCF Sandbox https://www.cncf.io/projects/kube-rs/ ; CNPG pooling (PgBouncer) https://cloudnative-pg.io/docs/1.30/connection_pooling ; River Rust crate 0.3.0 https://crates.io/crates/riverqueue ; official Rust MCP SDK https://github.com/modelcontextprotocol/rust-sdk
+- Hostinger VPS (starter-VM example): see `03-…` Sources

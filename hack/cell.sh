@@ -17,6 +17,7 @@ registry=dbcloud-registry
 host_tool=/usr/local/sbin/dbcloud-local-host
 export REPO="$root" LOCAL_STATE=/var/lib/dbcloud-local
 
+# die <message>: prints the message to stderr and exits 2.
 die() { echo "cell: $*" >&2; exit 2; }
 
 # image <prefix>: digest-pinned reference from images.lock.
@@ -31,8 +32,10 @@ tenant_nodes() {
   esac
 }
 
+# exists: true when the k3d cluster "local" already exists.
 exists() { k3d cluster list -o json | jq -e --arg n "$cluster" '.[] | select(.name == $n)' >/dev/null; }
 
+# up [profile]: verifies vendored files, creates the registry, VGs and cell if missing, then syncs Flux.
 up() {
   local profile="${1:-starter}" nodes
   nodes="$(tenant_nodes "$profile")"
@@ -54,6 +57,7 @@ up() {
   bash "${root}/hack/cell-flux.sh"
 }
 
+# down: deletes the cell, its registry and every tenant VG (all local tenant data). Safe if already gone.
 down() {
   local nodes
   nodes="$(k3d node list -o json 2>/dev/null | jq -r --arg c "$cluster" '.[] | select(.runtimeLabels["k3d.cluster"] == $c) | .name' | grep -E 'server|agent' || true)"
@@ -66,6 +70,7 @@ down() {
   [[ -z "$nodes" ]] || echo "removed nodes: $(tr '\n' ' ' <<<"$nodes")"
 }
 
+# status: read-only view of nodes, Flux objects, CNPG clusters and the host LVM state.
 status() {
   kubectl --context "$ctx" get nodes -o wide
   kubectl --context "$ctx" get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A 2>/dev/null || true
@@ -73,6 +78,7 @@ status() {
   sudo -n "$host_tool" status
 }
 
+# main <command> [args]: dispatches to up, down or status.
 main() {
   local cmd="${1:-}"
   shift || true

@@ -11,6 +11,8 @@ inclusion: always
 - MUST: no dead code, commented-out code, unused functions, unused config keys or unused dependencies. Delete them; git keeps history.
 - MUST: introduce an interface only at a real boundary (provider adapter, clock, external API) or when two implementations exist. Interfaces live with the consumer.
 - SHOULD: prefer the standard library and the libraries already in `plan/02-technology-stack.md`. A new dependency needs a PR note: why, license, maintenance status, amd64 + arm64 support.
+- MUST: pick the language by workload (ADR-027, `plan/02-technology-stack.md` §1): Rust for code on the customer connection or data path and for per-connection or per-packet work with tight latency or memory budgets; Go for the Kubernetes control plane and business logic. Moving a component across that line needs an ADR with a measured reason.
+- MUST: performance claims are targets until measured; a PR that changes data-path code states which target in `plan/01-architecture.md` §8.2 it was measured against.
 
 ## 2. Comments and documentation
 - MUST: every package/crate/module has a header comment stating its responsibility and what it deliberately does not do.
@@ -71,6 +73,7 @@ inclusion: always
 
 ## 9. Change hygiene
 - MUST: Conventional Commits; small PRs; the PR description includes the build-plan step and its "Done when" checklist.
-- MUST: CI green (lint, tests, race detector, clippy, cargo-deny, govulncheck, Trivy, hadolint, actionlint, zizmor, image builds for arm64 + amd64) before merge.
+- MUST: CI green (lint, tests, race detector, clippy, cargo-deny, govulncheck, Trivy, hadolint, actionlint, zizmor, image builds for arm64 + amd64) before merge. CI's path filters decide which of these run.
+- MUST: local verification is proportional to the change's risk (`80-dev-loop.md` "Verify in proportion to risk"): docs-only changes need no test run; security-relevant changes always get the full set.
 - MUST: a PR that adds recurring cost names the cost and the `plan/03-cost-model.md` §7 trigger it satisfies; otherwise it is rejected.
 - MUST: when a version, limit or decision in `plan/` changes, update the plan file in the same PR.

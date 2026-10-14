@@ -2,12 +2,30 @@
 
 Execution plan for `01-architecture.md`. Every step lists **Tasks**, **Done when** and, where relevant, the spike or gate it depends on. Code follows `07-engineering-standards.md` (also loaded automatically as Kiro steering from `.kiro/steering/`). Costs follow `03-cost-model.md`: the platform stays ≤ ₹9,000/month and nothing billable is created unless a step says so.
 
+## Progress
+
+Statuses: `Complete` (every "Done when" item has evidence), `Complete except: …`, `In progress`, `Not started`, `Blocked (reason)`. Updated 2026-10-07.
+
+| Step | Status | Evidence / date |
+|---|---|---|
+| 0.0 Accounts | In progress | GitHub repo exists (https://github.com/sayanf22/dbaas); Cloudflare, domain, Supabase, email, Razorpay and the VM shortlist record not done (Hostinger KVM 4 shortlisted on paper, ADR-024) |
+| 0.1 Repo, tooling, CI | Complete except: preview-Worker deploy (needs the Cloudflare account, Step 0.0); `task dev-up` on a clean machine (no such task in `Taskfile.yml` yet); CI minutes per run not recorded | CI green on skeletons on `main` since 2026-09-30; planted fake secret failed the secret scan (Step 0.1) |
+| 0.2 API contract and admin schema v0 | Complete | 2026-09-30: CI green, merged to `main` |
+| 0.3 Local cell (k3d) | Complete | 2026-09-30: `task cell:test` green on the starter and reference shapes, merged to `main` (9c4fa38) |
+| 0.4 `TenantDatabase` CRD + tenant-operator v0 | In progress | — |
+| 0.5–0.12 | Not started | — |
+| Gate G0 | Not started | — |
+| 1.1–1.13, Gate G1 | Not started | — |
+| Phases 2–5 | Not started | — |
+
 ## How to work through this plan
 
 - Top to bottom. A step starts only when the previous step's "Done when" passes in CI or on the real cell.
+- When a step's "Done when" passes, its Status line and the progress table above are updated in the same PR. A step is `Complete` only with evidence for every "Done when" item; otherwise it is `Complete except: …`.
+- **UI rule:** the web apps stay the Step 0.1 skeletons until Step 0.11 is the active step; no UI work while an earlier step is open.
 - **Build first, rent later:** all of Phase 0 runs on your PC (Docker, k3d, local Supabase) at ₹0. VMs are rented only at Step 1.1, after Gate G0.
 - One branch + PR per step; CI green (lint, unit, integration, multi-arch images, scans).
-- Everything is code: Terraform, node bootstrap, Flux manifests, Helm values, Dockerfiles, operator, gateway, tests. Console clicks only for account sign-up and, where the provider has no API, creating the three VMs from the bootstrap file.
+- Everything is code: Terraform, node bootstrap, Flux manifests, Helm values, Dockerfiles, operator, gateway, tests. Console clicks only for account sign-up and, where the provider has no API, creating the VMs from the bootstrap file.
 - Anything destructive or production-affecting (Terraform apply, admin-DB migrations, deletes, node replacement) needs a second reviewer or a signed checklist.
 - A failed spike is recorded with its fallback in `06-decision-records.md` before work continues.
 - A step that adds recurring cost names the cost and the `03-…` trigger it satisfies.
@@ -92,20 +110,24 @@ Compensating controls for GitHub Free, where private repos can't enforce branch 
 - Move to GitHub Team, paid from revenue, when a second engineer joins.
 **Done when:** CI is green on skeleton binaries/crate/apps within the free minutes budget (measured per run); each Next.js app exports and deploys to a preview Worker; a planted fake secret fails the secret scan; `task dev-up` works on a clean machine.
 
+**Status: Complete except: preview-Worker deploy (needs the Cloudflare account from Step 0.0); `task dev-up` on a clean machine (`Taskfile.yml` has `tools`, `db:up` and `cell:up` but no `dev-up`); CI minutes per run not recorded.** Evidence: CI green on the skeletons on `main` since 2026-09-30 (`.github/workflows/ci.yml`, `release-images.yml`); each Next.js app builds its static export in CI; a planted fake secret failed the secret scan.
+
 ### Step 0.2 — API contract and admin schema v0
 **Tasks:** `api/openapi.yaml` (PDF §22.1 + internal agent endpoints + plans/billing, RFC 9457 errors); oapi-codegen; goose migrations for §9; sqlc queries; River migrations; idempotency middleware; per-service database roles.
 **Done when:** migrations apply and roll back on the local Supabase stack; contract tests pass; a repeated POST with the same `Idempotency-Key` returns the original response.
-**Status (2026-09-30): done locally.** 10 goose migrations (35 tables incl. River, RLS on all, per-role grants, `retention_sweep`), schema invariant tests, 44-operation OpenAPI 3.1 contract with contract tests + vacuum lint, generated Go types, sqlc idempotency queries, idempotency middleware (per-caller keys, replay, 409/422, one-time secrets never stored) tested in memory, against Postgres and through the local Supavisor transaction pooler. CI runs the admin-DB tests against a throwaway Postgres 17.6 service.
+**Status: Complete (2026-09-30).** CI green, merged to `main`. Evidence: 10 goose migrations (35 tables incl. River, RLS on all, per-role grants, `retention_sweep`), schema invariant tests, 44-operation OpenAPI 3.1 contract with contract tests + vacuum lint, generated Go types, sqlc idempotency queries, idempotency middleware (per-caller keys, replay, 409/422, one-time secrets never stored) tested in memory, against Postgres and through the local Supavisor transaction pooler. CI runs the admin-DB tests against a throwaway Postgres 17.6 service.
 
 ### Step 0.3 — Local cell (k3d = K3s in Docker)
 **Tasks:** `supabase start` (local Postgres + Auth) for the admin DB; **k3d** with the pinned K3s v1.36 release, 3 servers (embedded etcd) + 1 agent, Traefik/ServiceLB/local-storage disabled, the same K3s config templates as production (`deploy/k3s/`); Flux with SOPS decryption (a local age key), fed from an OCI artifact of `deploy/` in a localhost registry (ADR-026); TopoLVM on a loop-device VG (local only); CNPG 1.30.1 + Barman Cloud Plugin 0.15.0; SeaweedFS as the local S3 (ADR-026); cert-manager (self-signed); VictoriaMetrics single; check whether the pinned PostgreSQL image is built with lz4 and zstd (`pg_config --configure`).
 **Done when:** a hand-written CNPG Cluster archives WAL to the local S3 and restores; a NetworkPolicy default-deny between two namespaces is enforced by K3s's policy controller; stopping one k3d server keeps the API up; the image's compression support is recorded in the plan catalog.
 
-**Status (2026-09-30): done locally.** `task cell:up` builds the cell in the starter shape (1 server, ADR-025) or `PROFILE=reference` (3 servers + 1 agent, `cp-1` tainted) from the shared `deploy/k3s/` config, then Flux applies every layer; `task cell:test` (`test/cell`) passes on both shapes: PSA `restricted` by default, Metadata-only audit log, secrets encryption on, WireGuard link on every node, tenant default-deny (own pooler, local S3 and 443 out allowed; other tenants, platform services and other ports blocked), TopoLVM ENOSPC at the volume size and online expansion without a restart, PITR to T1 returns exactly T1's rows, and stopping `cp-1` keeps the API and a tenant's writes going, with the server rejoining etcd. TopoLVM's `lvmd` runs on the WSL host (one loop-file VG per tenant node, `hack/local-host.sh`), as in TopoLVM's own kind demo, because k3d nodes have no LVM tools. The pinned PostgreSQL 18.6 image is built `--with-lz4 --with-zstd` (`02-…` §5). Findings that changed the plan: the backup sidecar needs 160 Mi, not 96 Mi (`03-…` §5), and Flux, TopoLVM, cert-manager (cainjector kept) and VictoriaMetrics need more than planned (`03-…` §6).
+**Status: Complete (2026-09-30).** `task cell:test` green on the starter and reference shapes, merged to `main` (9c4fa38). Evidence: `task cell:up` builds the cell in the starter shape (1 server, ADR-025) or `PROFILE=reference` (3 servers + 1 agent, `cp-1` tainted) from the shared `deploy/k3s/` config, then Flux applies every layer; `task cell:test` (`test/cell`) passes on both shapes: PSA `restricted` by default, Metadata-only audit log, secrets encryption on, WireGuard link on every node, tenant default-deny (own pooler, local S3 and 443 out allowed; other tenants, platform services and other ports blocked), TopoLVM ENOSPC at the volume size and online expansion without a restart, PITR to T1 returns exactly T1's rows, and stopping `cp-1` keeps the API and a tenant's writes going, with the server rejoining etcd. TopoLVM's `lvmd` runs on the WSL host (one loop-file VG per tenant node, `hack/local-host.sh`), as in TopoLVM's own kind demo, because k3d nodes have no LVM tools. The pinned PostgreSQL 18.6 image is built `--with-lz4 --with-zstd` (`02-…` §5). Findings that changed the plan: the backup sidecar needs 160 Mi, not 96 Mi (`03-…` §5), and Flux, TopoLVM, cert-manager (cainjector kept) and VictoriaMetrics need more than planned (`03-…` §6).
 
 ### Step 0.4 — `TenantDatabase` CRD + tenant-operator v0
 **Tasks:** CRD (architecture §6.2); renderers for the objects in architecture §6.1 (one Pooler, NetworkPolicies incl. the metadata-endpoint block, `isolationCheck` off for `instances: 1`, unreachable/not-ready tolerations for `tenant-local`, per-plan Postgres parameters, sidecar resources and `retentionPolicyIntervalSeconds: 21600` on the `ObjectStore`, staggered weekly base slot, `nodeMaintenanceWindow` handling); finalizers; conditions + `observedGeneration`; staged deletion; envtest unit tests; Chainsaw e2e (create → Ready → resize → expand storage → suspend → delete).
 **Done when:** e2e green on k3d; operator killed mid-reconcile converges; reapplying the same spec changes nothing; a pod in tenant A can't reach tenant B; every container of a tenant pod has memory request = limit; the rendered liveness-probe fields match the pinned CNPG version.
+
+**Status: In progress.**
 
 ### Step 0.5 — pg-gateway v0 (Rust)
 **Tasks:** listener with graceful drain; SSLRequest + direct TLS (ALPN); SNI and `options=endpoint` resolution; route table from a kube-rs watch of `TenantDatabase` and EndpointSlices, readiness on a complete list, signed peer snapshots; IP allowlist; per-tenant pooled and direct caps, per-node global cap and per-source-IP rate limit; ErrorResponse builder; upstream relay (pooled → PgBouncer pod, direct → Postgres primary pod); `SCRAM-SHA-256-PLUS` stripping; cancel keys (replica ID + HMAC) with mTLS forwarding between replicas; metrics; fuzz targets for the startup-packet parser; DaemonSet with `hostPort` 5432 (architecture §8.2).
@@ -116,6 +138,7 @@ Compensating controls for GitHub Free, where private repos can't enforce branch 
 - A protocol-level CancelRequest (psql Ctrl-C, pgx context cancel, JDBC `Statement.cancel()`) cancels the running query on both hostnames, including during a rolling update.
 - A replica restarted while the Kubernetes API is unreachable becomes ready from a peer snapshot and serves every existing route.
 - Fuzzing runs 30 min without a crash; a gateway pod stays under 32 Mi at idle.
+- The performance targets in architecture §8.2 are measured on k3d and recorded next to them (added round-trip latency p50 ≤ 0.1 ms / p99 ≤ 0.5 ms, connection set-up p99 ≤ 5 ms, ≤ 64 KiB per relayed connection, route propagation p99 ≤ 2 s); the per-node global connection cap is derived from the measured per-connection memory and the pod's memory limit, and `03-…` §6 is updated if the limit changes. k3d numbers are indicative; spike S3 confirms them on the real VM.
 
 ### Step 0.6 — control-api v0 + identity + authz
 **Tasks:** Supabase JWT verification via JWKS (ES256; `iss`, `aud`, `exp`); org API keys; orgs/memberships/tenants/databases/operations handlers; plan catalog (`base`, `plus`, `premium`) + entitlement checks; waitlist when capacity or `max_nodes` is reached; per-org and per-IP rate limits; Cedar policies + table-driven tests; audit events on every mutation.
@@ -149,26 +172,26 @@ Compensating controls for GitHub Free, where private repos can't enforce branch 
 
 ---
 
-## 3. Phase 1 — Launch on cell `c1` (3 VMs, paying customers)
+## 3. Phase 1 — Launch on cell `c1` (starter cell, growing to 3 VMs; paying customers)
 
-**Launch profile (ADR-025):** Phase 1 runs on the **starter cell**: one 8 vCPU / 24 GB VM that becomes `node-1`. Steps 1.1–1.12 apply to it unchanged except that there is one node, K3s runs as a single server with `cluster-init` (embedded etcd), and platform Deployments run 1 replica. `cp-1` and `node-2` are rented at Step 1.13.
+**Launch profile (ADR-025):** Phase 1 runs on the **starter cell**: one 4 vCPU / 16 GB / 200 GB NVMe VM (planning example: Hostinger KVM 4, ₹2,399/month at renewal, `03-…` §2.2) that becomes `node-1` and holds ≈ 12 `base` tenants (`03-…` §6.1). Steps 1.1–1.12 apply to it unchanged except that there is one node, K3s runs as a single server with `cluster-init` (embedded etcd), platform Deployments run 1 replica, and DNS has one A record. Drills that need a second VM (stopping one of three servers, client failover between two node addresses) run at Step 1.13; on the starter cell the node-loss drill replaces the one VM and restores every tenant from R2, and its measured RTO is what launch customers are told. `cp-1` and `node-2` are rented at Step 1.13.
 
 ### Step 1.1 — Choose the provider and rent the cell
-**Tasks:** from the Step 0.0 shortlist, rent one small VM per candidate for a day where the provider bills hourly (or use its trial) and run spike **S2**'s short benchmark; pick the provider that passes `03-…` §2.1 with the best numbers within the ceilings; record the decision, prices and benchmark in ADR-024. Then create `node-1` (starter cell, ADR-025); `cp-1` and `node-2` follow at Step 1.13 in the same region on the same private network (Terraform `modules/vm-c1-<provider>` if the provider has a Terraform provider, otherwise by hand with the bootstrap as cloud-init user data). Cloudflare API tokens scoped per use; the Terraform state bucket `dbcloud-tfstate` is created once with `wrangler r2 bucket create` and imported into `envs/global`.
-**Done when:** three VMs pass the checklist, including the full S2 run; the total monthly bill is ≤ ₹5,600; the bootstrap has formed the K3s cluster; `terraform plan` (where used) shows no changes.
+**Tasks:** from the Step 0.0 shortlist, rent one small VM per candidate for a day where the provider bills hourly (or use its trial or money-back period, for example Hostinger's 30 days) and run spike **S2**'s short benchmark; confirm the renewal price, the monthly-term price and whether a private network between VPSs exists (checklist items 4 and 7); pick the provider that passes `03-…` §2.1 with the best numbers within the ceilings; record the decision, prices and benchmark in ADR-024. Then create `node-1` (starter cell, ADR-025); `cp-1` and `node-2` follow at Step 1.13 in the same region on the same private network (Terraform `modules/vm-c1-<provider>` if the provider has a Terraform provider, otherwise by hand with the bootstrap as cloud-init user data). Cloudflare API tokens scoped per use; the Terraform state bucket `dbcloud-tfstate` is created once with `wrangler r2 bucket create` and imported into `envs/global`.
+**Done when:** the starter VM passes the checklist (item 4, the private network, is recorded for Step 1.13), including the full S2 run; its monthly bill at the renewal price is ≤ ₹2,400; the bootstrap has formed the single-server K3s cluster; `terraform plan` (where used) shows no changes.
 
 ### Step 1.2 — Terraform: global + `c1`
-`envs/global`: Cloudflare zone settings, WAF rules, the rate-limiting rule, Access apps/policies (admin app, Grafana, River UI, SSH per node, K3s API), Turnstile widget, R2 buckets (`dbcloud-c1-pg`, `dbcloud-c1-etcd`, `dbcloud-admin-exports`, imported `dbcloud-tfstate`) + bucket-lock rules, DNS records (`*.db.example.com` DNS-only A records → `node-1` and `node-2`, TTL 300; SPF/DKIM for email).
+`envs/global`: Cloudflare zone settings, WAF rules, the rate-limiting rule, Access apps/policies (admin app, Grafana, River UI, SSH per node, K3s API), Turnstile widget, R2 buckets (`dbcloud-c1-pg`, `dbcloud-c1-etcd`, `dbcloud-admin-exports`, imported `dbcloud-tfstate`) + bucket-lock rules, DNS records (`*.db.example.com` DNS-only A records → `node-1`, plus `node-2` from Step 1.13, TTL 300; SPF/DKIM for email).
 `envs/c1`: the cell's HTTP tunnel and admin tunnel with their ingress hostnames; the provider's VMs, private network and firewall where Terraform can manage them.
 The Next.js web apps are not in Terraform: they deploy with wrangler (Step 1.5).
 **Done when:** a second `terraform plan` shows no changes; SSH and the K3s API are reachable only through Cloudflare Access (a port scan from outside shows only TCP 5432 on the tenant nodes); each node's real allocatable CPU and memory are written into `03-…` §6.
 
 ### Step 1.3 — Cell bootstrap
 Flux bootstrap (read-only deploy key, SOPS age key created on the cell and stored in the password manager); infrastructure layer: NetworkPolicy baseline (default deny + DNS + metadata block) for every platform namespace, TopoLVM, cert-manager + ClusterIssuer (Cloudflare DNS-01), CNPG + Barman plugin + `ClusterImageCatalog`, system-upgrade-controller + Plans, VictoriaMetrics single + vmagent + vmalert + Alertmanager, VictoriaLogs + Fluent Bit (incl. the K3s audit log), Grafana, cloudflared (2 replicas), PSA labels and ValidatingAdmissionPolicies, weekly `trivy k8s` Job; third-party images mirrored by digest into ghcr.io; K3s's packaged CoreDNS and metrics-server manifests replaced with copies whose memory limit = request (K3s keeps a replaced packaged manifest when a `.skip` file sits next to it).
-**Done when:** all HelmReleases Ready; measured platform usage within ±20 % of `03-…` §6 (850m CPU, 3.5 GiB, 43 pods); a chart bump reconciles with no manual step; an etcd snapshot lands in R2.
+**Done when:** all HelmReleases Ready; measured platform usage within ±20 % of `03-…` §6.1 on the starter cell (≈ 720m CPU, ≈ 2.9 GiB, ≈ 35 pods; `03-…` §6 after Step 1.13: 850m, 3.5 GiB, 43 pods); a chart bump reconciles with no manual step; an etcd snapshot lands in R2.
 
 ### Step 1.4 — Admin DB on Supabase Free
-Per-service roles (`dbcloud_app`, `dbcloud_worker`, `dbcloud_migrator`), no `VALID UNTIL`; Supavisor pool size set; network restrictions to the three node IPs; SSL enforcement on; Data API disabled; goose migrations as an **in-cell Kubernetes Job** that dumps to R2 first (the release's migration image, applied by Flux before the app rollout; expand/contract, `lock_timeout` set). CI never connects to Supabase. RLS enabled on every table with no policies for `anon`/`authenticated`; River migrations; nightly `ExportAdminDB` to R2; weekly restore drill of the dump into `dbcloud-staging`; `RetentionSweep` for data older than 90 days; alerts at 60 % of database size and egress.
+Per-service roles (`dbcloud_app`, `dbcloud_worker`, `dbcloud_migrator`), no `VALID UNTIL`; Supavisor pool size set; network restrictions to the cell's node IPs (one on the starter cell, three after Step 1.13); SSL enforcement on; Data API disabled; goose migrations as an **in-cell Kubernetes Job** that dumps to R2 first (the release's migration image, applied by Flux before the app rollout; expand/contract, `lock_timeout` set). CI never connects to Supabase. RLS enabled on every table with no policies for `anon`/`authenticated`; River migrations; nightly `ExportAdminDB` to R2; weekly restore drill of the dump into `dbcloud-staging`; `RetentionSweep` for data older than 90 days; alerts at 60 % of database size and egress.
 **Done when:** the drill restores and a checksum query matches production; a failed migration Job blocks the app rollout; a connection from any IP other than the node IPs is refused.
 
 ### Step 1.5 — Platform services
@@ -200,12 +223,12 @@ Public site `web/site` (Next.js static export at `example.com`): product, pricin
 **Done when:** Razorpay has approved the website and issued live keys; a test subscription is charged, invoiced and reconciled; a failed renewal suspends the database after the grace period and a payment restores it; replayed webhooks change nothing.
 
 ### Step 1.12 — Launch
-Invited customers first, then public sign-up up to the cell's capacity (`03-…` §6), then the waitlist. Weekly capacity/error/cost review.
+Invited customers first, then public sign-up up to the cell's capacity (`03-…` §6.1 on the starter cell, §6 after Step 1.13), then the waitlist. Weekly capacity/error/cost review.
 **Done when:** Gate G1 passes.
 
 ### Step 1.13 — Grow the starter cell into the reference cell (ADR-025)
-**Trigger:** the starter VM reaches 80 % of its capacity (~18 `base` tenants, `03-…` §6.1) or a customer needs failover, and monthly net covers ≈ ₹3,300 more.
-**Tasks:** rent `cp-1` (2 vCPU / 4 GB) and `node-2` (8 vCPU / 24 GB) from the same provider, region and private network; run the node bootstrap as `server-cp` and `server-worker`, joining the existing etcd through `node-1` (no rebuild: `cluster-init` was set at launch); taint `cp-1`; platform Deployments back to 2 replicas with spread constraints and PDBs; add `node-2`'s A record; re-place new tenants across both nodes.
+**Trigger:** the starter VM reaches 80 % of its capacity (≈ 10 `base` tenants: 0.8 × 12, `03-…` §6.1) or a customer needs failover, **and the owner decides to fund it**: the step adds ≈ ₹3,300/month, inside the ≤ ₹9,000 budget but more than a full starter VM earns (≈ ₹970/month net, `03-…` §7). Until then new sign-ups are waitlisted at `max_nodes`.
+**Tasks:** confirm the provider still passes `03-…` §2.1 for the reference cell, including the private network (item 4) and the ceilings; if it doesn't, record the alternative in ADR-024 first (public-IP join with nftables allow-lists and WireGuard after S8, or the reference cell at another provider as a new cell with tenant migration). Resize the starter VM to the reference node shape where the provider allows it in place, or keep it as a smaller `node-1` and recompute `03-…` §6. Rent `cp-1` (2 vCPU / 4 GB) and `node-2` (8 vCPU / 24 GB) from the same provider, region and private network; run the node bootstrap as `server-cp` and `server-worker`, joining the existing etcd through `node-1` (no rebuild: `cluster-init` was set at launch); taint `cp-1`; platform Deployments back to 2 replicas with spread constraints and PDBs; add `node-2`'s A record; re-place new tenants across both nodes.
 **Done when:** `etcdctl member list` shows three healthy members; stopping any one VM keeps the API and platform up (Gate G1 availability drill); a fresh etcd snapshot restores; no tenant was restarted during the join.
 
 **Gate G1:** Phase 1 gates green for 14 consecutive days; weekly restore drills green; **Cost** gate green (first full month total within `03-…` §1); no open Sev-1/Sev-2.
@@ -263,9 +286,9 @@ More cells on any provider, including an **AWS or GCP cell** (K3s on their VMs, 
 | Pooler | connection storms and PgBouncer restarts stay under `max_connections` | 1 |
 | Backup/PITR | exact known-point restore; gaps reported | 0/1 |
 | R2 compatibility | upload, multipart, restore, PITR, retention with locks, re-archive inside lock, interruption; etcd snapshot upload and restore | 0/1 |
-| Gateway | client matrix on both hostnames, direct TLS, wrong SNI rejected, allowlists, protocol cancel, failover between node addresses, 10k conns per node | 0/1 |
+| Gateway | client matrix on both hostnames, direct TLS, wrong SNI rejected, allowlists, protocol cancel, failover between node addresses, 10k conns per node, performance targets of architecture §8.2 | 0/1 |
 | Static stability | Supabase blocked + tunnel stopped 30 min, Kubernetes API stopped 15 min: running DBs unaffected, zero primary restarts | 1 |
-| Node loss | tenant node powered off: API stays up, clients fail over, node replaced, its tenants restored from R2, RTO measured; `cp-1` powered off: API stays up | 1 |
+| Node loss | starter cell: the VM powered off, a replacement bootstrapped, every tenant restored from R2, RTO measured; reference cell (Step 1.13): tenant node powered off: API stays up, clients fail over, node replaced, its tenants restored from R2, RTO measured; `cp-1` powered off: API stays up | 1 |
 | Cost | first full month within `03-…` §1; no unplanned billable resource | 1 |
 | Billing | charge, invoice, dunning, suspend, restore, webhook replay | 1 |
 | HA | exactly one writer in all drills | 3 |
@@ -280,13 +303,13 @@ More cells on any provider, including an **AWS or GCP cell** (K3s on their VMs, 
 | ID | Question | Pass condition | Fallback |
 |---|---|---|---|
 | S1 | K3s v1.36 + CNPG + NetworkPolicy | Kubernetes conformance (sonobuoy quick mode) and CNPG smoke tests pass on the pinned K3s; K3s's policy controller enforces default deny, namespace selectors, `ipBlock` with `except` and egress rules; WireGuard pod traffic between nodes works | Calico in place of flannel + kube-router (a new cell, since the CNI is fixed at creation) |
-| S2 | Provider VM quality at launch density | fio 4k random write p99 and fsync p99 < 10 ms, CPU steal < 5 % under load, etcd fsync p99 < 10 ms while 25 `base` tenants run pgbench on the same NVMe; PVC binds, online expansion works, reboot survives; PgBouncer memory measured | another shortlisted provider; lower density per node |
-| S3 | pg-gateway on `hostPort` with two A records | client IPs visible (allowlists work); stopping one node's gateway moves new connections to the other address; cancel works; 10k concurrent connections per node | NodePort + host nftables DNAT; PROXY protocol v2 if a provider TCP load balancer is used later |
+| S2 | Provider VM quality at launch density | fio 4k random write p99 and fsync p99 < 10 ms, CPU steal < 5 % under sustained load (not only a burst), etcd fsync p99 < 10 ms while the planned density (≈ 12 `base` tenants on the starter VM, `03-…` §6.1) runs pgbench on the same NVMe; the usable `tenantvg` size on the provider's disk layout recorded; PVC binds, online expansion works, reboot survives; PgBouncer memory measured | another shortlisted provider; lower density per node |
+| S3 | pg-gateway on `hostPort` with two A records | client IPs visible (allowlists work); stopping one node's gateway moves new connections to the other address (from Step 1.13; one address on the starter cell); cancel works; the performance targets in architecture §8.2 are met on the real VM (added latency p50 ≤ 0.1 ms / p99 ≤ 0.5 ms, set-up p99 ≤ 5 ms, ≥ 10k concurrent connections per node, ≤ 64 KiB per connection) and the measured numbers are recorded | NodePort + host nftables DNAT; PROXY protocol v2 if a provider TCP load balancer is used later |
 | S4 | Barman Cloud Plugin ↔ **R2** | WAL archive (zstd); uncompressed base backup > 5 GB (multipart); restore; PITR; retention delete under the 8-day bucket lock, with deletes refused by the lock retried by a later run; re-archiving a WAL segment that already exists inside the lock; killed upload recovers; compressed base backup retested (barman #954); sidecar peak memory and R2 operations per tenant measured | another S3-compatible store; revise ADR-012 |
 | S5 | mcp-auth with real MCP clients | Claude Code, VS Code and Cursor complete OAuth; tokens have the MCP URL as `aud`; conformance scenarios pass | DCR-only for affected clients |
 | S6 | Multi-arch images | every pinned image has `linux/amd64` and `linux/arm64` | build it in CI |
 | S7 | **Supabase Free** from the cell | River coordinator over the session pooler (LISTEN/NOTIFY) from a node IP; control-api over the transaction pooler with `QueryExecModeExec`; network restrictions and SSL enforcement block other sources; worker recovers after a Supabase restart; `pg_dump` of `dbcloud` + `auth` to R2 and restore into `dbcloud-staging` work | River `PollOnly`; upgrade to Pro earlier |
-| S8 | Provider facts | private network speed and isolation between the three VMs; included transfer and overage price confirmed; first invoice equals the quote; console and rebuild work | another shortlisted provider |
+| S8 | Provider facts | whether the provider has a free private network at all (open for Hostinger, `03-…` §2.2); if it has, its speed and isolation between the three VMs; if not, latency, loss and WireGuard throughput between the VMs' public IPs; included transfer and overage price confirmed; first invoice equals the quote; console and rebuild work | another shortlisted provider |
 | S9 | Cloudflare edge | Tunnel streams MCP SSE without buffering; heartbeats keep sessions past the 125 s read timeout; Access protects Grafana, River UI, SSH and `kubectl`; Workers Static Assets deploy; Turnstile works with Supabase Auth; the one rate-limiting rule applies | — |
 | S10 | Database DNS and certificates | `*.db.example.com` resolves to both node IPs; cert-manager issues `*.db.example.com` via the Cloudflare DNS-01 solver; an explicit tenant record overrides the wildcard within its TTL | — |
 | S11 | K3s operations | etcd snapshot to R2 (region `auto`) and a full restore on new VMs with the saved token; server replacement; a K3s patch upgrade via system-upgrade-controller with tenants running and zero Postgres restarts | manual upgrade runbook; snapshots copied to R2 by a script |
@@ -357,6 +380,9 @@ Internal (mTLS, cell agents): `GET /internal/v1/cells/{id}/desired`, `POST /inte
 | R15 | Cloudflare authoritative-DNS outage | TTL 300 on the A records; node IPs shown in the dashboard |
 | R16 | Admin DB restored from an older state (24 h RPO on Free) | agent safety rules (architecture §10.5), `RebuildCatalogFromCells` runbook, Razorpay reconciliation |
 | R17 | Single provider region | Phase 4 second cell; `RebuildCell` from git + R2 meanwhile |
+| R18 | Starter cell is one VM: any VM failure or reboot stops every tenant until Step 1.13 | best-effort tier stated at sign-up, node-loss drill with measured RTO, R2 PITR for every plan, grow at 80 % when funded (ADR-025) |
+| R19 | Launch provider has no free private network (unconfirmed for Hostinger) | S8 before Step 1.13; public-IP join with nftables allow-lists + WireGuard, or the reference cell at another provider (`03-…` §2.2) |
+| R20 | Intro VM price ends after the prepaid term | budget and break-even use renewal prices only (`03-…` §1, §7) |
 
 ## 12. Definition of done (every release)
 

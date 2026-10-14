@@ -1,14 +1,14 @@
 # 06 — Architecture Decision Records (Blueprint 4.0)
 
 Format: context → decision → consequences → revisit when.
-Status: **Accepted**, or **Accepted (spike-gated: Sx)** = accepted unless the named spike in `04-build-plan.md` fails, in which case the listed fallback is adopted and this record is updated. Records superseded in 4.0 are listed at the end.
+Status: **Accepted**, **Superseded by ADR-x**, or **Accepted (spike-gated: Sx)** = accepted unless the named spike in `04-build-plan.md` fails, in which case the listed fallback is adopted and this record is updated. Records superseded in 4.0 are listed at the end.
 
 ---
 
 ### ADR-001 — Cells are K3s clusters on plain VMs
 **Status:** Accepted (spike-gated: S1, S11)
 **Context:** Oracle Cloud can't be used, and managed Kubernetes on mainstream clouds breaks the ₹9,000/month budget. The original blueprint used K3s.
-**Decision:** Every cell is one **K3s v1.36** cluster on three Linux VMs in one region: three servers with embedded etcd (`cp-1` control-plane only, `node-1`/`node-2` also running workloads); growth nodes join as agents. Cells are independent failure and scale units registered with the control plane.
+**Decision:** Every cell is one **K3s v1.36** cluster on three Linux VMs in one region: three servers with embedded etcd (`cp-1` control-plane only, `node-1`/`node-2` also running workloads); growth nodes join as agents. The first cell launches as a one-server starter cell and grows into this shape (ADR-025). Cells are independent failure and scale units registered with the control plane.
 **Consequences:** No control-plane fee; we run etcd ourselves (snapshots to R2, quorum runbooks). K3s is a CNCF-certified distribution; CNPG officially targets vanilla Kubernetes, so conformance and CNPG smoke tests run on every K3s bump. The same code runs on any conformant Kubernetes, so a managed Kubernetes cell can be added later.
 **Revisit when:** a contract requires an SLA-backed Kubernetes control plane, or revenue makes a managed control plane cheaper than operating etcd.
 
@@ -129,9 +129,9 @@ Status: **Accepted**, or **Accepted (spike-gated: Sx)** = accepted unless the na
 **Revisit when:** load tests show a cell can safely hold more.
 
 ### ADR-020 — Language split: Rust for the data path, Go for everything else
-**Status:** Accepted
+**Status:** Superseded by ADR-027 (2026-10-07), which keeps the same assignments and states the rule and its evidence.
 **Decision:** Rust for `pg-gateway` only. Go for control-api, worker, cluster-agent, tenant-operator, mcp-server, mcp-auth, CLI. TypeScript with Next.js for the web apps (ADR-021). Every backend component ships as a Docker-built multi-arch image (`amd64` + `arm64`) in ghcr.io.
-**Revisit when:** another component lands on the per-connection data path.
+**Revisit when:** see ADR-027.
 
 ### ADR-021 — Next.js static exports on Workers Static Assets
 **Status:** Accepted
@@ -144,7 +144,7 @@ Status: **Accepted**, or **Accepted (spike-gated: Sx)** = accepted unless the na
 **Status:** Accepted
 **Decision:** Three launch plans (`03-…` §4): `base` 0.1 vCPU guaranteed / 0.5 burst, 512 MiB, 5 GB, ₹299 + GST; `plus` 0.25 / 1, 1 GiB, 10 GB; `premium` 0.5 / 1, 2 GiB, 20 GB. CPU request = the guaranteed vCPU, CPU limit = the burst; memory request = limit on every container.
 **Consequences:** Small plans feel fast when a node is idle and still get their guaranteed share under contention; no plan can be memory-overcommitted.
-**Revisit when:** noisy-neighbour metrics show burstable tenants harming others, or the price review changes a plan.
+**Revisit when:** noisy-neighbour metrics show tenants' CPU bursts harming others, or the price review changes a plan.
 
 ### ADR-023 — We build the DBaaS; we reuse building blocks
 **Status:** Accepted
@@ -155,16 +155,17 @@ Status: **Accepted**, or **Accepted (spike-gated: Sx)** = accepted unless the na
 **Status:** Accepted (spike-gated: S2, S8)
 **Context:** The whole platform must cost ≤ ₹9,000/month. Mainstream VPS and hyperscaler prices for a useful three-VM cell are ₹33,000+ (`03-…` §2.2).
 **Decision:** The reference cell (1 × 2 vCPU / 4 GB + 2 × 8 vCPU / 24 GB NVMe) must cost ≤ ₹5,600/month, which in practice means the value-VPS class. The provider is chosen at Step 1.1 from a shortlist, on the checklist in `03-…` §2.1 and spike S2's measurements, not on price alone. Supabase Pro is added at its trigger; everything else stays on free plans until revenue pays for more.
-**Consequences:** Launch cost ≈ ₹5,700–5,900/month; ≈ ₹8,100–8,300 with Supabase Pro. Value-VPS trade-offs (shared vCPU, weaker SLAs) are managed by measurement, alerts and the ability to rebuild a cell elsewhere.
+**Consequences:** Launch cost ≈ ₹2,470/month on the one-VM starter cell (ADR-025, renewal price); ≈ ₹5,700–5,900 on the reference cell; ≈ ₹8,100–8,300 with Supabase Pro. VM prices are budgeted at renewal, not at introductory rates. Value-VPS trade-offs (shared vCPU, weaker SLAs) are managed by measurement, alerts and the ability to rebuild a cell elsewhere.
 **Provider record (Step 0.0 / 1.1):** shortlist, prices, checklist results, S2 numbers and the final choice are recorded here.
+- 2026-10-07, shortlist entry for the starter VM: **Hostinger KVM 4** (India, Mumbai; 4 vCPU / 16 GB / 200 GB NVMe / 16 TB; ₹1,099 intro with a 24-month prepay, ₹2,399 renewal, as published on hostinger.in on 2026-09-14; `03-…` §2.2). Open against the checklist: item 4 (private network, not found in Hostinger's docs), item 7 (prepay term), item 8 (S2), item 3 (`tenantvg` size). Not yet ordered.
 **Revisit when:** revenue makes a mainstream provider or a hyperscaler cell affordable, or the chosen provider fails the checklist.
 
 ### ADR-025 — Launch on a one-VM starter cell that grows into the reference cell
 **Status:** Accepted (spike-gated: S2 on the chosen VM; local capacity test passed 2026-09-30)
 **Context:** The first 10–20 paying customers must break even quickly. The three-VM reference cell costs ≤ ₹5,600/month and breaks even at ~20 `base` tenants (`03-…` §7). K3s can start one server on embedded etcd (`--cluster-init`) and add servers later without a rebuild (https://docs.k3s.io/datastore/ha-embedded).
-**Decision:** Phase 1 starts on **one VM**, 8 vCPU / 24 GB / 200 GB NVMe (≤ ₹2,300/month), running K3s as a single server with embedded etcd, the whole platform with one replica per component, and up to ~22 `base` tenants (`03-…` §6.1). All scope stays: the same images, operator, gateway, control plane, MCP, billing and backups run on it. When the cell reaches 80 % of its capacity (~18 `base`), `cp-1` and `node-2` join as K3s servers and the starter VM becomes `node-1` of the reference cell (Step 1.13); platform Deployments go back to 2 replicas.
-**Consequences:** Break-even at ~9 `base` tenants instead of ~20. Until Step 1.13 there is **no failover**: losing the VM stops every tenant until a replacement VM is bootstrapped and tenants restore from R2 (RTO measured in the node-loss drill, hours), and OS reboots interrupt everyone in the announced window. Launch plans are sold as best-effort with 7-day PITR, as before. Measured locally: 10 `base` tenants were Ready in 79 s, all connected through PgBouncer, all archived WAL, cross-tenant access was blocked, idle memory ≈ 127 MiB per tenant against 656 MiB reserved (requests stay = limits; no overcommit). Step 0.3 then measured the backup sidecar's peak during a base backup and raised it from 96 to 160 Mi (720 Mi per `base` tenant), which lowers the starter VM from ~25 to ~22 `base`; break-even stays at 9.
-**Revisit when:** a customer needs an availability commitment before the reference cell exists (then grow earlier), or S2 shows the chosen VM can't hold 22 tenants.
+**Decision:** Phase 1 starts on **one VM**, 4 vCPU / 16 GB / 200 GB NVMe (planning example: Hostinger KVM 4, ₹2,399/month at renewal; ceiling ≤ ₹2,400), running K3s as a single server with embedded etcd, the whole platform with one replica per component, and up to ~12 `base` tenants (`03-…` §6.1). All scope stays: the same images, operator, gateway, control plane, MCP, billing and backups run on it. When the cell reaches 80 % of its capacity (≈ 10 `base`), the owner either grows it (`cp-1` and `node-2` join as K3s servers and the starter VM becomes `node-1` of the reference cell, Step 1.13; platform Deployments go back to 2 replicas) or waitlists new sign-ups until growth is funded.
+**Consequences:** Break-even at 9 `base` tenants at the renewal price ((₹2,399 + ₹70) ÷ ₹286.55 = 8.6), 5 on the intro price, instead of ~20 on the reference cell. A full starter VM nets ≈ ₹970/month, so the step to the reference cell (≈ ₹3,300/month more) is paid from the budget, not from starter revenue. Until Step 1.13 there is **no failover**: losing the VM stops every tenant until a replacement VM is bootstrapped and tenants restore from R2 (RTO measured in the node-loss drill, hours), and OS reboots interrupt everyone in the announced window. Launch plans are sold as best-effort with 7-day PITR, as before. Measured locally: 10 `base` tenants were Ready in 79 s, all connected through PgBouncer, all archived WAL, cross-tenant access was blocked, idle memory ≈ 127 MiB per tenant against 656 MiB reserved (requests stay = limits; no overcommit). Step 0.3 then measured the backup sidecar's peak during a base backup and raised it from 96 to 160 Mi (720 Mi per `base` tenant), which lowered the then 8 vCPU / 24 GB starter VM from ~25 to ~22 `base`. On 2026-10-07 the starter VM's planning size changed to 4 vCPU / 16 GB (Hostinger KVM 4, the cheapest shortlisted VM that breaks even; a 2 vCPU / 8 GB VM holds ≈ 3 `base` and needs 5 to break even), which holds ≈ 12 `base`; break-even stays at 9. The decision itself (one VM first, same code, grow at Step 1.13) is unchanged.
+**Revisit when:** a customer needs an availability commitment before the reference cell exists (then grow earlier), S2 shows the chosen VM can't hold 12 tenants, or the launch provider turns out to have no private network for the reference cell (`03-…` §2.2).
 
 ### ADR-026 — SeaweedFS as the local S3; Flux reads the local cell from an OCI artifact
 **Status:** Accepted (2026-09-30, Step 0.3)
@@ -172,6 +173,22 @@ Status: **Accepted**, or **Accepted (spike-gated: Sx)** = accepted unless the na
 **Decision:** (1) The local cell uses **SeaweedFS** 4.48 (Apache-2.0, single pod `weed server -s3`, digest-pinned) as its S3 endpoint, only in `deploy/local/s3`. Production keeps R2; nothing outside the local overlay references SeaweedFS. (2) Locally, `hack/cell-flux.sh` pushes `deploy/` as an OCI artifact (`flux push artifact`) to a localhost-only registry, and an `OCIRepository` feeds the same Kustomization tree production uses. Production Flux reads git (Step 1.3).
 **Consequences:** Barman's S3 client is exercised against a real S3 API locally; R2-specific behaviour (multipart part sizes, checksum headers, `region auto`) is still proven only by spike S4 on R2. SeaweedFS needed an upload-buffer cap and a 512 Mi limit to survive a 1 GB base backup. Local rollouts go through Flux exactly as in production, but the local source is an artifact, not a commit, so git history is not what the local cell runs.
 **Revisit when:** MinIO or another maintained, permissively licensed S3 server fits better, or the local cell moves to a git source.
+
+### ADR-027 — Language split by workload
+**Status:** Accepted (2026-10-07; supersedes ADR-020, same component assignments)
+**Context:** The owner wants Rust wherever it makes the product faster, safer or lighter, and Go wherever Go is the stronger tool, without a blanket limit either way. The choice has to follow the workload and the maturity of the libraries each component depends on. Evidence checked 2026-10-07:
+- kube-rs is a CNCF **Sandbox** project (since 2021-11-16); controller-runtime is the reference framework for Kubernetes operators, and CloudNativePG publishes its API types in Go, so a CNPG-facing operator in Go uses the upstream types directly (https://www.cncf.io/projects/kube-rs/ , https://github.com/kube-rs/kube).
+- River's production implementation is Go. A Rust crate (`riverqueue`) exists but is at 0.3.0, with 0.2.0 and 0.3.0 both published on 2026-10-07 (https://crates.io/crates/riverqueue , https://riverqueue.com/docs).
+- CNPG's `Pooler` manages only PgBouncer (https://cloudnative-pg.io/docs/1.30/connection_pooling). Of the Rust poolers, PgCat is reported abandoned since ~May 2025 (https://github.com/postgresml/pgcat/issues) and PgDog is a fast-moving 0.x under AGPL-3.0 (https://github.com/pgdogdev/pgdog).
+- An official Rust MCP SDK exists (`rmcp`, https://github.com/modelcontextprotocol/rust-sdk), so MCP is not locked to Go; our mcp-server shares auth, store and `sqlsafety` code with the Go services.
+- On a localhost benchmark (Feb 2026), PgBouncer added ≈ 0.05 ms and PgDog ≈ 0.07 ms per SELECT, while the two Go proxies tested added ≈ 0.1 and ≈ 0.4 ms at 4 clients (https://gitlab.com/postgres-ai/postgresql-consulting/tests-and-benchmarks/-/issues/72). It is one benchmark: per-query proxy cost is small and depends on the implementation as much as the language, so the gateway gets measured targets rather than assumptions.
+**Decision:**
+- **Rust** for everything on the customer's connection or data path, and for anything latency- or memory-critical that runs per connection or per packet: pg-gateway (TLS termination, SNI/`options` routing, handshake relay, SCRAM channel-binding handling, cancel forwarding, caps and rate limits, route cache), and any future data-path proxy, parser of untrusted wire input, or per-node agent with a tight memory or latency budget.
+- **Go** for the Kubernetes control plane and business logic: tenant-operator (controller-runtime + CNPG Go types), cluster-agent (client-go), control-api (oapi-codegen strict server), worker (River), mcp-auth (zitadel/oidc, OpenID-certified), mcp-server (official Go SDK; `rmcp` is the recorded alternative if MCP becomes latency-critical), CLI.
+- **PgBouncer** stays the per-tenant pooler through CNPG's `Pooler`.
+- TypeScript (Next.js static exports, ADR-021) for the web apps. Every backend component ships as a Docker-built multi-arch image (`amd64` + `arm64`) in ghcr.io.
+**Consequences:** No rewrite: the components keep their languages. Rust code follows `.kiro/steering/30-rust.md` (bounded buffers, no hot-path allocation, `forbid(unsafe_code)`), Go code `20-go.md`. pg-gateway gets measurable performance targets (`01-…` §8.2) that Step 0.5 and spike S3 must meet. A component that moves across the line needs a new ADR with a measured reason.
+**Revisit when:** a Go component lands on the per-connection path or shows latency or memory problems a rewrite would fix (measured); kube-rs or a Rust River client reaches the maturity of their Go counterparts; MCP traffic becomes latency-critical; or CNPG supports another pooler.
 
 ---
 
