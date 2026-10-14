@@ -4,7 +4,7 @@
 # Base images are pinned by digest; Renovate updates them.
 
 # Build stage: the Go toolchain on Debian 13 (trixie), the same release as the distroless runtime below.
-FROM docker.io/library/golang:1.27.1-trixie@sha256:3b77fc618ec235a1ab412de7737f120dd507c57e8d87de4cbb7994fb94275ed5 AS build
+FROM docker.io/library/golang:1.27.2-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS build
 WORKDIR /src
 # Dependencies first so the module download layer is reused while only source changes. go.sum comes with
 # go.mod so every module is checked against the committed checksums (15-security-and-reliability.md §9).

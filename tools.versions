@@ -5,7 +5,7 @@
 
 # Languages
 # renovate: datasource=golang-version depName=go
-GO=1.27.1
+GO=1.27.2
 # renovate: datasource=node-version depName=node
 NODE=24.21.0
 
