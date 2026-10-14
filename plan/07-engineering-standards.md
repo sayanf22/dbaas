@@ -6,17 +6,16 @@ These standards keep the codebase small, secure, reliable, provider-neutral and 
 |---|---|---|
 | `.kiro/steering/00-project-context.md` | always | what runs where, components, languages, invariants (incl. the spend cap), steering index |
 | `.kiro/steering/10-engineering-standards.md` | always | minimal code, comments, scale, resource budgets, reliability, security summary, observability, data/API, testing, change hygiene |
-| `.kiro/steering/15-security-and-reliability.md` | always | threat model, tenant isolation, tokens, secrets, input handling, crypto/TLS (incl. DRBD TLS for storage traffic), deadlines/retries/idempotency/static stability, logging and audit, supply chain, review gates |
-| `.kiro/steering/20-go.md` | `**/*.go` | layout, errors, context, concurrency, pgx through the admin DB's CNPG Pooler (transaction mode) and direct session connections, HTTP timeouts, gosec rules, tests, doc-comment template |
+| `.kiro/steering/15-security-and-reliability.md` | always | threat model, tenant isolation, tokens, secrets, input handling, crypto/TLS, deadlines/retries/idempotency/static stability, logging and audit, supply chain, review gates |
+| `.kiro/steering/20-go.md` | `**/*.go` | layout, errors, context, concurrency, pgx through Supavisor, HTTP timeouts, gosec rules, tests, doc-comment template |
 | `.kiro/steering/30-rust.md` | `gateway/**` | crate hygiene, no-panic and checked arithmetic, cancel safety, bounded resources, protocol correctness (cancel keys, SCRAM, readiness), rustls, tests, rustdoc template |
-| `.kiro/steering/35-sql.md` | `db/**` | parameterized queries, per-service roles, `search_path`, RLS, `SECURITY DEFINER`, timeouts, safe goose migrations for the self-hosted admin DB |
-| `.kiro/steering/40-kubernetes-operator.md` | `**/*operator/**` (operator packages and `cmd/tenant-operator`) | reconcile rules, SSA, conditions, finalizers, rendered static stability, per-tenant footprint (Burstable ranges inside plan caps, `tenant-network` volumes, compute-node scheduling), restricted pods, RBAC, tests |
+| `.kiro/steering/35-sql.md` | `db/**` | parameterized queries, per-service roles, `search_path`, RLS, `SECURITY DEFINER`, timeouts, safe goose migrations |
+| `.kiro/steering/40-kubernetes-operator.md` | `**/*operator/**` (operator packages and `cmd/tenant-operator`) | reconcile rules, SSA, conditions, finalizers, rendered static stability, per-tenant footprint, restricted pods, RBAC, tests |
 | `.kiro/steering/50-web.md` | `web/**` | Next.js 16 static export rules (no server features, query-param resource pages, webpack production builds), generated client only, no secrets, XSS-safe rendering, hash-based CSP in `_headers` + Trusted Types, session handling, CORS, accessibility, pnpm supply chain |
 | `.kiro/steering/55-containers.md` | `**/*Dockerfile*` | multi-stage, distroless, digest pins, non-root, BuildKit secrets, native multi-arch builds, SBOM and signing |
-| `.kiro/steering/60-infrastructure.md` | `deploy/**` | spend cap, provider neutrality, node roles (control, compute, storage) with taints and nodeSelectors, node bootstrap and host hardening, kernel pinning and the DRBD module, LINSTOR/DRBD storage, K3s configuration (CIS hardening, etcd snapshots, upgrades), Terraform modules/state/pinning, SOPS secrets, Kubernetes manifest hardening, Flux/Helm |
+| `.kiro/steering/60-infrastructure.md` | `deploy/**` | spend cap, provider neutrality, node bootstrap and host hardening, K3s configuration (CIS hardening, etcd snapshots, upgrades), Terraform modules/state/pinning, SOPS secrets, Kubernetes manifest hardening, Flux/Helm |
 | `.kiro/steering/70-ci.md` | `.github/**` | SHA-pinned actions, least-privilege tokens, injection-safe workflows, GitHub Free compensating controls (manual deploy workflows, secret scanning with Trivy), free-minute budget, pipeline content |
 | `.kiro/steering/75-shell.md` | `**/*.sh` | strict mode, ShellCheck, quoting, no `eval`, idempotent scripts |
-| `.kiro/steering/80-dev-loop.md` | always | command timeouts, bounded polling instead of long sleeps, no interactive prompts, reusing the local cell, scoped checks while iterating and full checks once per step, parallel work |
 
 ## Principles
 
@@ -24,7 +23,7 @@ These standards keep the codebase small, secure, reliable, provider-neutral and 
 2. **Everything commented for the next engineer.** Every package, type and function has a doc comment; inline comments explain why, invariants and limits.
 3. **Stateless services, bounded resources.** State lives in the admin DB or Kubernetes; every pool, queue and fan-out has a limit; every pod fits the footprint in `03-…`.
 4. **Idempotent and retry-safe.** `Idempotency-Key` on writes, unique River jobs, provider state checked before retries, one retry layer with backoff and jitter.
-5. **Statically stable.** Outages of `control-1` (control plane, admin DB, Auth) or Cloudflare never touch running databases.
+5. **Statically stable.** Control-plane, Supabase or Cloudflare outages never touch running databases.
 6. **Secure by default.** Tenants are hostile to each other; authorization on every object, least privilege, no secrets in logs, SSRF-guarded outbound fetches, pinned and scanned dependencies.
 7. **Observable.** Structured logs with tenant/cell/operation IDs, RED metrics, traces, an alert and runbook for every failure mode.
 8. **Tested where it breaks.** Failure paths, fuzzed parsers, cross-tenant tests, real dependencies in integration tests.
@@ -44,7 +43,7 @@ These standards keep the codebase small, secure, reliable, provider-neutral and 
 - [ ] Logs/metrics/traces added; no secrets, bodies or unbounded labels; alert + runbook for new failure modes.
 - [ ] Tests for success and failure paths; fuzz target for new parsers; bug fixes include a regression test.
 - [ ] Linters and scanners clean (golangci-lint/gosec, clippy, cargo-deny, govulncheck, ESLint, hadolint, ShellCheck, actionlint, zizmor, Trivy); suppressions carry a reason.
-- [ ] Resource requests, admin-DB connections and recurring cost unchanged, or the tables in `01-…`/`03-…` are updated in this PR.
+- [ ] Resource requests, Supabase connections and recurring cost unchanged, or the tables in `01-…`/`03-…` are updated in this PR.
 - [ ] Security-sensitive change (auth, gateway handshake, SQL safety, webhooks, crypto, IAM/RBAC) has a second reviewer.
 - [ ] `plan/` updated if a version, limit or decision changed.
 
