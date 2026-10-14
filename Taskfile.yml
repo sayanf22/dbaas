@@ -73,7 +73,7 @@ tasks:
       - docker buildx build --load -t dbcloud/pg-gateway:dev gateway
 
   cell:up:
-    desc: "Start the local cell under Flux (PROFILE=starter: 1 server, default; PROFILE=reference: 3 servers + 1 agent)"
+    desc: "Start the local cell under Flux (PROFILE=starter: 1 server + 1 tenant agent, default; PROFILE=reference: 3 servers + 1 tenant agent)"
     cmds: ['bash hack/cell.sh up {{.PROFILE | default "starter"}}']
 
   cell:sync:

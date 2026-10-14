@@ -45,7 +45,7 @@ spec:
     spec:
       serviceAccountName: seaweedfs
       automountServiceAccountToken: false
-      nodeSelector: {dbcloud.io/pool: tenant}
+      nodeSelector: {dbcloud.io/pool: control}   # platform workload: never on the tenant node
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

@@ -14,6 +14,14 @@ images:
   - name: ghcr.io/cloudnative-pg/plugin-barman-cloud
     digest: sha256:563c680fe7fda3466ca2b1f55a1397ed2ddc9e760360107dd7724f1959c1a536
 patches:
+  # Platform workloads (CNPG operator, Barman plugin) run on control nodes only (ctl-1 at launch); the tenant
+  # node is tainted for tenants. The name is ignored, the target decides. TopoLVM is placed by Helm values.
+  - target: {kind: Deployment, namespace: cnpg-system}
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: all}
+      spec: {template: {spec: {nodeSelector: {dbcloud.io/pool: control}}}}
   # The plugin injects this sidecar into every tenant pod; pin it by digest too (value is base64).
   - target: {kind: Secret, namespace: cnpg-system, name: plugin-barman-cloud-2b4mtt7m69}
     patch: |

@@ -15,6 +15,14 @@ images:
   - name: quay.io/jetstack/cert-manager-cainjector
     digest: sha256:c85268c64f2e0e76684bf5fe8906caff34b82523561c6affe0fae3546bd87562
 patches:
+  # Platform workloads run on control nodes only (ctl-1 at launch); the tenant node is tainted for tenants.
+  # A strategic merge keeps upstream's kubernetes.io/os selector; the name is ignored, the target decides.
+  - target: {kind: Deployment, namespace: cert-manager}
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: all}
+      spec: {template: {spec: {nodeSelector: {dbcloud.io/pool: control}}}}
   - target: {kind: Deployment, namespace: cert-manager, name: cert-manager}
     patch: |
       - op: add

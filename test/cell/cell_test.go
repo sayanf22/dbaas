@@ -3,6 +3,7 @@
 // Package cell_test is the acceptance suite for the local cell (plan/04 Step 0.3 "Done when"): Pod Security,
 // the audit log and secrets encryption, tenant isolation and egress rules enforced by K3s's network-policy
 // controller, TopoLVM size limits and online expansion, WAL archiving to S3 with a point-in-time restore,
+// the node pools (platform on pool=control, only tenants and DaemonSets on the tainted pool=tenant nodes),
 // and, on the reference shape, the control plane surviving the loss of a server.
 //
 // It drives a running cell (`task cell:up`) through kubectl, docker and hack/tenant.sh, the same tools an
@@ -13,10 +14,13 @@ package cell_test
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -124,13 +128,34 @@ func tenant(t *testing.T) string {
 	if out, err := run(t, shortTimeout, "", "bash", filepath.Join(repoRoot, "hack", "tenant.sh"), "create", ref, "base"); err != nil {
 		t.Fatalf("tenant.sh create %s: %v\n%s", ref, err, out)
 	}
-	t.Cleanup(func() { deleteNamespace(t, ref); deleteBackups(t, ref) })
+	t.Cleanup(func() { deleteTenant(t, ref) })
 	waitTenant(t, ref)
 	return ref
 }
 
+// tenantDeleteTimeout bounds the wait for a tenant namespace to disappear in deleteTenant (measured ~30 s:
+// CNPG's smart shutdown of the instance); it stays inside runCleanup's shortTimeout.
+const tenantDeleteTimeout = 100 * time.Second
+
+// deleteTenant removes a test tenant: its namespace first, waiting until it is gone, then its local S3
+// prefix. The order matters: while the instance pod terminates, its Barman sidecar still archives WAL, and
+// removing the prefix before that re-created it (prefixes of 4 test tenants left behind on 2026-10-14).
+// KEEP_TEST_NAMESPACES=1 keeps both for debugging.
+func deleteTenant(t *testing.T, ref string) {
+	if os.Getenv("KEEP_TEST_NAMESPACES") == "1" {
+		t.Logf("keeping tenant %s", ref)
+		return
+	}
+	if out, err := runCleanup("", "kubectl", "--context", kubeContext(), "delete", "namespace", ref, "--ignore-not-found",
+		"--wait=true", "--timeout="+tenantDeleteTimeout.String()); err != nil {
+		t.Errorf("delete tenant namespace %s: %v\n%s", ref, err, out)
+	}
+	deleteBackups(t, ref)
+}
+
 // deleteBackups removes a test tenant's prefix from the local S3 bucket so repeated runs don't fill its
-// 10 GiB volume. In production, backup retention after tenant deletion is the worker's job (plan/01 §14).
+// 10 GiB volume. Call it only once the tenant's pods are gone (deleteTenant). In production, backup retention
+// after tenant deletion is the worker's job (plan/01 §14).
 func deleteBackups(t *testing.T, ref string) {
 	if os.Getenv("KEEP_TEST_NAMESPACES") == "1" {
 		return
@@ -232,6 +257,85 @@ func TestAuditLogAndSecretsEncryption(t *testing.T) {
 	}
 }
 
+// ownerRef is the part of a pod's owner reference TestTenantsOnlyOnTenantPool needs: the owner's kind.
+type ownerRef struct {
+	Kind string `json:"kind"`
+}
+
+// podList is the subset of `kubectl get pods -o json` that TestTenantsOnlyOnTenantPool reads.
+type podList struct {
+	Items []struct {
+		Metadata struct {
+			Namespace       string     `json:"namespace"`
+			Name            string     `json:"name"`
+			OwnerReferences []ownerRef `json:"ownerReferences"`
+		} `json:"metadata"`
+		Spec struct {
+			NodeName string `json:"nodeName"`
+		} `json:"spec"`
+		Status struct {
+			Phase string `json:"phase"`
+		} `json:"status"`
+	} `json:"items"`
+}
+
+// TestTenantsOnlyOnTenantPool: the launch layout (ctl-1 + node-1) holds. Every node is in exactly one pool,
+// tenant nodes carry the dbcloud.io/pool=tenant:NoSchedule taint, every pod on a tenant node is a tenant pod
+// (namespace labelled dbcloud.io/tenant) or a DaemonSet pod, and no tenant pod runs on a control node.
+func TestTenantsOnlyOnTenantPool(t *testing.T) {
+	pools := map[string]string{} // node name -> pool
+	for line := range strings.Lines(mustKubectl(t, "get", "nodes", "-o",
+		`jsonpath={range .items[*]}{.metadata.name}{" "}{.metadata.labels.dbcloud\.io/pool}{" "}{.spec.taints[?(@.key=="dbcloud.io/pool")].effect}{"\n"}{end}`)) {
+		f := strings.Fields(line)
+		if len(f) < 2 || (f[1] != "control" && f[1] != "tenant") {
+			t.Fatalf("node line %q: every node needs dbcloud.io/pool=control or tenant", strings.TrimSpace(line))
+		}
+		tainted := len(f) == 3 && f[2] == "NoSchedule"
+		if (f[1] == "tenant") != tainted {
+			t.Errorf("node %s (pool=%s): tenant taint present = %v; want %v", f[0], f[1], tainted, f[1] == "tenant")
+		}
+		pools[f[0]] = f[1]
+	}
+	if inPools := slices.Collect(maps.Values(pools)); !slices.Contains(inPools, "control") || !slices.Contains(inPools, "tenant") {
+		t.Fatalf("pools = %v; want at least one control and one tenant node", pools)
+	}
+
+	// A tenant must exist, or "no tenant pod on a control node" proves nothing. The rollout wait stays
+	// inside shortTimeout.
+	ref := tenant(t)
+	mustKubectl(t, "-n", ref, "rollout", "status", "deploy/pooler", "--timeout=100s")
+	tenantNS := map[string]bool{}
+	for ns := range strings.FieldsSeq(mustKubectl(t, "get", "namespaces", "-l", "dbcloud.io/tenant", "-o", "jsonpath={.items[*].metadata.name}")) {
+		tenantNS[ns] = true
+	}
+	if !tenantNS[ref] {
+		t.Fatalf("tenant namespace %s has no dbcloud.io/tenant label", ref)
+	}
+	var pods podList
+	if err := json.Unmarshal([]byte(mustKubectl(t, "get", "pods", "-A", "-o", "json")), &pods); err != nil {
+		t.Fatalf("decode pods: %v", err)
+	}
+	var tenantPods int
+	for _, p := range pods.Items {
+		if p.Spec.NodeName == "" || p.Status.Phase == "Succeeded" || p.Status.Phase == "Failed" {
+			continue // not placed, or finished: holds no node resources
+		}
+		id := p.Metadata.Namespace + "/" + p.Metadata.Name
+		daemon := slices.ContainsFunc(p.Metadata.OwnerReferences, func(o ownerRef) bool { return o.Kind == "DaemonSet" })
+		switch isTenant := tenantNS[p.Metadata.Namespace]; {
+		case pools[p.Spec.NodeName] == "tenant" && !isTenant && !daemon:
+			t.Errorf("pod %s runs on tenant node %s; only tenant pods and DaemonSets may", id, p.Spec.NodeName)
+		case pools[p.Spec.NodeName] == "control" && isTenant:
+			t.Errorf("tenant pod %s runs on control node %s", id, p.Spec.NodeName)
+		case isTenant && p.Metadata.Namespace == ref:
+			tenantPods++
+		}
+	}
+	if tenantPods < 2 {
+		t.Errorf("tenant %s has %d running pods on tenant nodes; want ≥ 2 (Postgres + PgBouncer)", ref, tenantPods)
+	}
+}
+
 // TestTenantNetworkIsolation: default-deny both ways per tenant, enforced by K3s's kube-router controller.
 func TestTenantNetworkIsolation(t *testing.T) {
 	a, b := tenant(t), tenant(t)
@@ -258,11 +362,39 @@ func TestTenantNetworkIsolation(t *testing.T) {
 	}
 }
 
+// fillChunkMiB is the size of one fsync'd write in fillScript: it bounds the dirty page cache the probe's
+// cgroup can hold at once to about 16 MiB, an eighth of probeMemory.
+const fillChunkMiB = 16
+
+// fillScript returns a shell loop that writes mib MiB of zeros to /data/fill in fillChunkMiB pieces with
+// O_DIRECT, each flushed with fsync before the next starts, and stops at the first failed write, printing
+// dd's error.
+//
+// Why not one `dd oflag=direct` (the old test, OOM-killed with exit 137 in 1 of 3 runs on 2026-10-14):
+// locally the VG sits on a loop device, and the loop driver does the backing-file I/O with the memcg of the
+// pod that issued it (drivers/block/loop.c loop_handle_cmd -> set_active_memcg). The loop file is attached
+// without direct I/O, so O_DIRECT on XFS (kept: fdinfo flags 0140001) still left every block as dirty page
+// cache of the backing file charged to the probe, which reclaim can't free until it is written back.
+// Measured with a 256 MiB limit: file pages at the limit, up to 187 MiB dirty and 202 MiB under writeback,
+// plus ~10 MiB of XFS slab; a 900 MiB write was OOM-killed even at 256 MiB. Production LVs sit on the
+// NVMe directly, so there O_DIRECT alone bypasses the cache. The fsync per chunk flushes the loop device,
+// which writes the backing file's dirty pages out, so they never exceed one chunk.
+func fillScript(mib int) string {
+	return fmt.Sprintf(`i=0; while [ "$i" -lt %[1]d ]; do `+
+		`out=$(dd if=/dev/zero of=/data/fill bs=1M count=%[2]d seek=$((i * %[2]d)) oflag=direct conv=notrunc,fsync 2>&1) || { echo "$out"; exit 1; }; `+
+		`i=$((i + 1)); done`, mib/fillChunkMiB, fillChunkMiB)
+}
+
 // TestStorageLimitAndOnlineExpansion: a TopoLVM volume stops writes at its size and grows while mounted.
 func TestStorageLimitAndOnlineExpansion(t *testing.T) {
+	// probeMemory: 128 MiB = one fillChunkMiB of dirty page cache + ~10 MiB of XFS slab + the shell, with
+	// wide headroom for writeback lag; clean page cache above that is reclaimed, not OOM-killed (fillScript).
+	const probeMemory = "128Mi"
 	ns := randomName(t, "st-")
 	mustKubectl(t, "create", "namespace", ns)
 	t.Cleanup(func() { deleteNamespace(t, ns) })
+	// The probe stands in for a tenant's database volume: tenant namespace label, tenant pool, taint toleration.
+	mustKubectl(t, "label", "namespace", ns, "dbcloud.io/tenant="+ns)
 	applyYAML(t, fmt.Sprintf(`apiVersion: v1
 kind: PersistentVolumeClaim
 metadata: {name: data, namespace: %[1]s}
@@ -276,16 +408,17 @@ kind: Pod
 metadata: {name: probe, namespace: %[1]s}
 spec:
   nodeSelector: {dbcloud.io/pool: tenant}
+  tolerations: [{key: dbcloud.io/pool, operator: Equal, value: tenant, effect: NoSchedule}]
   securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
   containers:
     - name: probe
       image: %[2]q
       command: [sleep, "3600"]
-      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 32Mi}}
+      resources: {requests: {cpu: 10m, memory: %[3]s}, limits: {memory: %[3]s}}
       securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
       volumeMounts: [{name: data, mountPath: /data}]
   volumes: [{name: data, persistentVolumeClaim: {claimName: data}}]
-`, ns, alpineImage))
+`, ns, alpineImage, probeMemory))
 	mustKubectl(t, "-n", ns, "wait", "pod/probe", "--for=condition=Ready", "--timeout=180s")
 	uid := mustKubectl(t, "-n", ns, "get", "pod", "probe", "-o", "jsonpath={.metadata.uid}")
 
@@ -300,11 +433,9 @@ spec:
 	if got := sizeMB(); got > 1100 {
 		t.Fatalf("filesystem size = %d MB; want ≤ 1100 for a 1 GiB volume", got)
 	}
-	// oflag=direct: buffered writes would fill the probe's 32 MiB cgroup with dirty page cache and get it
-	// OOM-killed before the volume is full.
-	out, err := kubectl(t, "-n", ns, "exec", "probe", "--", "dd", "if=/dev/zero", "of=/data/fill", "bs=1M", "count=1500", "oflag=direct")
+	out, err := kubectl(t, "-n", ns, "exec", "probe", "--", "sh", "-c", fillScript(1536))
 	if err == nil || !strings.Contains(out, "No space left") {
-		t.Errorf("writing 1.5 GB into a 1 GiB volume: err=%v out=%q; want ENOSPC", err, out)
+		t.Errorf("writing 1.5 GiB into a 1 GiB volume: err=%v out=%q; want ENOSPC", err, out)
 	}
 
 	mustKubectl(t, "-n", ns, "patch", "pvc", "data", "--type=merge", "-p", `{"spec":{"resources":{"requests":{"storage":"2Gi"}}}}`)
@@ -312,8 +443,8 @@ spec:
 	if got := mustKubectl(t, "-n", ns, "get", "pod", "probe", "-o", "jsonpath={.metadata.uid}/{.status.containerStatuses[0].restartCount}"); got != uid+"/0" {
 		t.Errorf("pod after expansion = %s; want the same pod, no restarts (%s/0)", got, uid)
 	}
-	if out, err := kubectl(t, "-n", ns, "exec", "probe", "--", "sh", "-c", "rm -f /data/fill && dd if=/dev/zero of=/data/fill bs=1M count=1500 oflag=direct"); err != nil {
-		t.Errorf("writing 1.5 GB after growing to 2 GiB: %v\n%s", err, out)
+	if out, err := kubectl(t, "-n", ns, "exec", "probe", "--", "sh", "-c", "rm -f /data/fill && "+fillScript(1536)); err != nil {
+		t.Errorf("writing 1.5 GiB after growing to 2 GiB: %v\n%s", err, out)
 	}
 }
 
@@ -361,7 +492,7 @@ spec:
 
 	// Restore into a new tenant namespace: the same template, but bootstrapped from src's backups at T1.
 	dst := randomName(t, "t-")
-	t.Cleanup(func() { deleteNamespace(t, dst); deleteBackups(t, dst) })
+	t.Cleanup(func() { deleteTenant(t, dst) })
 	rendered, err := run(t, shortTimeout, "", "bash", filepath.Join(repoRoot, "hack", "tenant.sh"), "render", dst, "base")
 	if err != nil {
 		t.Fatalf("render %s: %v\n%s", dst, err, rendered)
@@ -398,12 +529,13 @@ spec:
 	}
 }
 
-// TestControlPlaneSurvivesServerLoss runs on the reference shape only: stopping cp-1 (server-0) keeps the
-// API and a tenant database serving, and the server rejoins etcd when it starts again.
+// TestControlPlaneSurvivesServerLoss runs on the HA (reference) shape only: stopping server-0 (ctl-1, the
+// `cluster-init` server, which also runs platform pods) keeps the API, through the other two servers, and a
+// tenant database on the tenant agent serving; the server rejoins etcd when it starts again.
 func TestControlPlaneSurvivesServerLoss(t *testing.T) {
 	servers := mustKubectl(t, "get", "nodes", "-l", "node-role.kubernetes.io/etcd=true", "-o", "name")
 	if strings.Count(servers, "\n")+1 < 3 {
-		t.Skip("starter shape (1 server); run `task cell:up PROFILE=reference` for this test")
+		t.Skip("starter shape (1 server + 1 tenant agent); run `task cell:up PROFILE=reference` for this test")
 	}
 	ref := tenant(t)
 	sql(t, ref, "create table heartbeat (at timestamptz)")

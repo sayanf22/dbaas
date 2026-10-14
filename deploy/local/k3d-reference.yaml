@@ -1,8 +1,8 @@
-# Local cell, reference shape (plan/01 §5.2): three K3s servers on embedded etcd plus one agent.
-#   server-0 = cp-1    control plane only (CriticalAddonsOnly taint, no tenant label)
-#   server-1 = node-1  control plane + platform + tenants
-#   server-2 = node-2  control plane + platform + tenants
-#   agent-0  = node-3  growth node: tenants only
+# Local cell, HA shape (later): three K3s servers on embedded etcd plus one agent.
+#   server-0..2 = ctl-1..3  K3s servers (etcd members) + platform workloads; label dbcloud.io/pool=control
+#   agent-0     = node-1    K3s agent: tenant databases and per-node DaemonSets only; label
+#                           dbcloud.io/pool=tenant, taint dbcloud.io/pool=tenant:NoSchedule
+# Same labels, taint and manifests as the starter shape (k3d-starter.yaml); more tenant nodes join as agents.
 # The k3d load balancer gives kubectl one address for the three API servers (used to test that the API
 # survives the loss of a server). hack/cell.sh sets REPO, LOCAL_STATE and K3S_IMAGE.
 apiVersion: k3d.io/v1alpha5
@@ -27,8 +27,11 @@ volumes:
     nodeFilters: [agent:*]
   - volume: ${REPO}/deploy/local/k3s/90-local-agent.yaml:/etc/rancher/k3s/config.yaml.d/90-local.yaml
     nodeFilters: [agent:*]
+  # TopoLVM on every node (tenant volumes on the agent, platform PVCs on the servers), one lvmd socket each.
   - volume: /dev:/dev
-    nodeFilters: [server:1, server:2, agent:0]
+    nodeFilters: [server:*, agent:*]
+  - volume: ${LOCAL_STATE}/run/k3d-local-server-0:/run/topolvm
+    nodeFilters: [server:0]
   - volume: ${LOCAL_STATE}/run/k3d-local-server-1:/run/topolvm
     nodeFilters: [server:1]
   - volume: ${LOCAL_STATE}/run/k3d-local-server-2:/run/topolvm
@@ -43,11 +46,13 @@ options:
     extraArgs:
       - arg: --cluster-init
         nodeFilters: [server:0]
-      - arg: --node-taint=CriticalAddonsOnly=true:NoExecute   # cp-1 runs only the control plane
-        nodeFilters: [server:0]
+      - arg: --node-taint=dbcloud.io/pool=tenant:NoSchedule   # tenant node: tenants + DaemonSets only
+        nodeFilters: [agent:*]
     nodeLabels:
+      - label: dbcloud.io/pool=control
+        nodeFilters: [server:*]
       - label: dbcloud.io/pool=tenant
-        nodeFilters: [server:1, server:2, agent:0]
+        nodeFilters: [agent:*]
   kubeconfig:
     updateDefaultKubeconfig: true
     switchCurrentContext: true

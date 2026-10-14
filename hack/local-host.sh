@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time, root-only preparation of the WSL host for the local cell (never used on production VMs):
 #   local-host.sh setup              kernel modules at boot (WireGuard for flannel), lvm2 + xfsprogs, lvmd binary
-#   local-host.sh lvm-up <node>...   per tenant node: sparse loop file -> VG tenantvg-<node> -> lvmd (systemd unit)
+#   local-host.sh lvm-up <node>...   per k3d node: sparse loop file -> VG tenantvg-<node> -> lvmd (systemd unit)
 #   local-host.sh lvm-down <node>... stop lvmd, remove the VG, detach and delete the loop file
 #   local-host.sh status
 # Why LVM lives on the host: k3d nodes are containers without LVM tools, so, like TopoLVM's own kind demo
@@ -16,8 +16,8 @@ trap 'echo "local-host: failed at line $LINENO" >&2' ERR
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 state=/var/lib/dbcloud-local
-# 100 GiB sparse per tenant node: room for the 10-tenant capacity test (10 × 5 GB thick volumes) plus the
-# platform's volumes; sparse, so only written data uses real disk.
+# 100 GiB sparse per node: on a tenant node room for the 10-tenant capacity test (10 × 5 GB thick volumes),
+# on a control node for the platform's volumes; sparse, so only written data uses real disk.
 loop_size=100G
 lvmd_bin=/usr/local/sbin/lvmd
 # Candidate sudoers file during setup; global so the EXIT trap removes it on every exit path.

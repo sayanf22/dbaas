@@ -144,9 +144,13 @@ spec:
   resources:
     requests: {cpu: ${PG_CPU_REQ}, memory: ${PG_MEM}}
     limits: {cpu: ${PG_CPU_LIM}, memory: ${PG_MEM}}
-  # Tenant pods run only on tenant nodes, never on cp-1 (40-kubernetes-operator.md).
+  # Tenant pods run only on tenant nodes (node-1 at launch), never on a control node (40-kubernetes-operator.md).
+  # Tenant nodes are tainted dbcloud.io/pool=tenant:NoSchedule so platform pods stay off them; tenants
+  # tolerate it. CNPG applies the same nodeSelector and tolerations to its initdb/recovery Job pods.
   affinity:
     nodeSelector: {dbcloud.io/pool: tenant}
+    tolerations:
+      - {key: dbcloud.io/pool, operator: Equal, value: tenant, effect: NoSchedule}
   storage:
     size: ${STORAGE}
     storageClass: tenant-local           # TopoLVM: the plan size is a hard limit (plan/01 §7.1)
@@ -167,7 +171,10 @@ spec:
       default_pool_size: "${POOL_SIZE}"
   template:
     spec:
+      # Same placement as the database: tenant nodes only, tolerating their taint.
       nodeSelector: {dbcloud.io/pool: tenant}
+      tolerations:
+        - {key: dbcloud.io/pool, operator: Equal, value: tenant, effect: NoSchedule}
       containers:
         - name: pgbouncer
           image: ${PGB_IMAGE}

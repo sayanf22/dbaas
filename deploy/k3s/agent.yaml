@@ -1,10 +1,17 @@
-# K3s agent configuration for growth nodes (plan/01 §5.2), installed as
+# K3s agent configuration for tenant nodes (node-1 at launch, more as the cell grows), installed as
 # /etc/rancher/k3s/config.yaml.d/10-dbcloud-agent.yaml. Agents run no etcd or API server, so their
-# kube-reserved is smaller than a server's (60-infrastructure.md). Per-node values come from the bootstrap.
+# kube-reserved is smaller than a server's (60-infrastructure.md). Per-node values come from the bootstrap
+# in a later drop-in: node-ip, server URL, node-label dbcloud.io/pool=tenant and
+# node-taint dbcloud.io/pool=tenant:NoSchedule (only tenant pods and DaemonSets run on tenant nodes).
 protect-kernel-defaults: true
 kubelet-arg:
   - max-pods=110
-  - kube-reserved=cpu=200m,memory=512Mi
+  # K3s agent + containerd + shims (every cgroup outside kubepods), measured on the local cell's tenant agent
+  # over a busy 19 min (acceptance suite, 5 storage runs, 3-tenant capacity test; 197 samples, 2026-10-14):
+  # working set p95 479 MiB (max 517), CPU p95 193m. + 25 % = 599 MiB / 241m, above the earlier
+  # 512Mi / 200m, so 640Mi / 250m. Re-measure on the real node-1 at Step 1.3.
+  - kube-reserved=cpu=250m,memory=640Mi
+  - kube-reserved=cpu=250m,memory=640Mi
   - system-reserved=cpu=200m,memory=512Mi
   - eviction-hard=memory.available<100Mi
   - streaming-connection-idle-timeout=5m

@@ -71,8 +71,10 @@ main() {
   # Two pods per tenant (Postgres + PgBouncer); the max() guard avoids a division by zero when metrics-server
   # hasn't reported any tenant pod yet.
   kc top pods -A --no-headers | awk '$1 ~ /^t-cap/ { sub("Mi", "", $4); used += $4; pods++ } END { t = (pods > 1 ? pods / 2 : 1); printf "tenant pods: %d, memory in use: %d MiB (%.0f MiB per tenant)\n", pods, used, used / t }'
-  kc get node -o json | jq -r '.items[0].status.allocatable | "node allocatable: cpu \(.cpu), memory \(.memory)"'
-  kc describe node | awk '/Allocated resources/,/Events/' | grep -E 'cpu|memory' | head -2
+  # Tenants run only on the tenant pool, so its nodes' allocatable is the capacity being measured.
+  kc get node -l dbcloud.io/pool=tenant -o json |
+    jq -r '.items[] | "\(.metadata.name) allocatable: cpu \(.status.allocatable.cpu), memory \(.status.allocatable.memory)"'
+  kc describe node -l dbcloud.io/pool=tenant | awk '/Allocated resources/,/Events/' | grep -E '^ +(cpu|memory) '
 
   if [[ "$keep" != "--keep" ]]; then
     for ns in "${refs[@]}"; do bash "${root}/hack/tenant.sh" delete "$ns" --yes >/dev/null & done

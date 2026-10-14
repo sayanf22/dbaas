@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Local cell lifecycle (plan/04 Step 0.3): k3d cell "local" in the starter shape (1 server, ADR-025) or the
-# reference shape (3 servers + 1 agent), the local OCI registry, and one LVM volume group per tenant node.
+# Local cell lifecycle (plan/04 Step 0.3): k3d cell "local" in the starter shape (ADR-025: server-0 = ctl-1,
+# the K3s server running the platform; agent-0 = node-1, the tainted tenant node) or the HA shape
+# "reference" (3 servers + 1 agent), the local OCI registry, and one LVM volume group per node.
 #   cell.sh up [starter|reference]   create (or keep) the cell, then hand over to hack/cell-flux.sh
 #   cell.sh down                     delete the cell, its registry, volume groups and loop files
 #   cell.sh status
@@ -23,11 +24,12 @@ die() { echo "cell: $*" >&2; exit 2; }
 # image <prefix>: digest-pinned reference from images.lock.
 image() { grep -m1 "^$1" "${vendor}/images.lock"; }
 
-# tenant_nodes <profile>: k3d container names of the nodes that carry tenants (and so need a VG + lvmd).
-tenant_nodes() {
+# lvm_nodes <profile>: k3d container names of every node of the profile. Each needs a VG + lvmd: tenant
+# nodes for tenant volumes, control nodes for the platform PVCs (VictoriaMetrics, local S3) on tenant-local.
+lvm_nodes() {
   case "$1" in
-    starter) echo "k3d-${cluster}-server-0" ;;
-    reference) echo "k3d-${cluster}-server-1 k3d-${cluster}-server-2 k3d-${cluster}-agent-0" ;;
+    starter) echo "k3d-${cluster}-server-0 k3d-${cluster}-agent-0" ;;
+    reference) echo "k3d-${cluster}-server-0 k3d-${cluster}-server-1 k3d-${cluster}-server-2 k3d-${cluster}-agent-0" ;;
     *) die "profile must be starter or reference" ;;
   esac
 }
@@ -38,7 +40,7 @@ exists() { k3d cluster list -o json | jq -e --arg n "$cluster" '.[] | select(.na
 # up [profile]: verifies vendored files, creates the registry, VGs and cell if missing, then syncs Flux.
 up() {
   local profile="${1:-starter}" nodes
-  nodes="$(tenant_nodes "$profile")"
+  nodes="$(lvm_nodes "$profile")"
   [[ -x "$host_tool" ]] || die "run once: wsl -d Ubuntu-24.04 -u root -- bash hack/local-host.sh setup"
   (cd "$vendor" && sha256sum -c --quiet SHA256SUMS) || die "vendored files don't match deploy/vendor/SHA256SUMS"
 
@@ -57,16 +59,16 @@ up() {
   bash "${root}/hack/cell-flux.sh"
 }
 
-# down: deletes the cell, its registry and every tenant VG (all local tenant data). Safe if already gone.
+# down: deletes the cell, its registry and every node's VG (all local tenant data). Safe if already gone.
 down() {
   local nodes
   nodes="$(k3d node list -o json 2>/dev/null | jq -r --arg c "$cluster" '.[] | select(.runtimeLabels["k3d.cluster"] == $c) | .name' | grep -E 'server|agent' || true)"
   # Registry first: while it is attached, k3d can't remove the cluster's network.
   k3d registry delete "k3d-${registry}" 2>/dev/null || true
   k3d cluster delete "$cluster"
-  # Remove the VGs of every possible tenant node, whichever profile ran.
+  # Remove the VGs of every node of the larger profile, a superset of the starter's, whichever profile ran.
   # shellcheck disable=SC2046 # reason: fixed, validated container names
-  sudo -n "$host_tool" lvm-down $(tenant_nodes starter) $(tenant_nodes reference)
+  sudo -n "$host_tool" lvm-down $(lvm_nodes reference)
   [[ -z "$nodes" ]] || echo "removed nodes: $(tr '\n' ' ' <<<"$nodes")"
 }
 

@@ -1,12 +1,17 @@
-# Local cell, starter shape (ADR-025): one K3s server with embedded etcd (`cluster-init`), which is also the
-# tenant node, like the single starter VM. Created by hack/cell.sh, which sets REPO, LOCAL_STATE and
-# K3S_IMAGE (digest from deploy/vendor/images.lock); k3d expands ${VAR} before parsing this file.
+# Local cell, starter shape (ADR-025): the two launch VMs as two k3d nodes.
+#   server-0 = ctl-1   the single K3s server (embedded etcd, `cluster-init`) + every platform workload;
+#                      label dbcloud.io/pool=control, no taint, no tenants
+#   agent-0  = node-1  K3s agent: tenant databases (CNPG Cluster + Pooler pods) and per-node DaemonSets only;
+#                      label dbcloud.io/pool=tenant, taint dbcloud.io/pool=tenant:NoSchedule
+# Platform workloads select pool=control; tenant pods select pool=tenant and tolerate the taint, so nothing
+# else lands on the tenant node (test/cell TestTenantsOnlyOnTenantPool). Created by hack/cell.sh, which sets
+# REPO, LOCAL_STATE and K3S_IMAGE (digest from deploy/vendor/images.lock); k3d expands ${VAR} before parsing.
 apiVersion: k3d.io/v1alpha5
 kind: Simple
 metadata:
   name: local
 servers: 1
-agents: 0
+agents: 1
 image: ${K3S_IMAGE}
 registries:
   use: [k3d-dbcloud-registry:5000]      # local OCI registry for Flux artifacts (hack/cell.sh creates it)
@@ -20,11 +25,19 @@ volumes:
     nodeFilters: [server:*]
   - volume: ${REPO}/deploy/k3s/audit.yaml:/var/lib/rancher/k3s/server/audit.yaml
     nodeFilters: [server:*]
-  # TopoLVM on the tenant node: host block devices and the node's lvmd socket (hack/local-host.sh).
+  - volume: ${REPO}/deploy/k3s/agent.yaml:/etc/rancher/k3s/config.yaml.d/10-dbcloud-agent.yaml
+    nodeFilters: [agent:*]
+  - volume: ${REPO}/deploy/local/k3s/90-local-agent.yaml:/etc/rancher/k3s/config.yaml.d/90-local.yaml
+    nodeFilters: [agent:*]
+  # TopoLVM on every node: host block devices and the node's own lvmd socket (hack/local-host.sh). The
+  # tenant node carries the tenant volumes; the control node needs a VG too, because platform PVCs
+  # (VictoriaMetrics, local S3) use the same `tenant-local` StorageClass.
   - volume: /dev:/dev
-    nodeFilters: [server:0]
+    nodeFilters: [server:0, agent:0]
   - volume: ${LOCAL_STATE}/run/k3d-local-server-0:/run/topolvm
     nodeFilters: [server:0]
+  - volume: ${LOCAL_STATE}/run/k3d-local-agent-0:/run/topolvm
+    nodeFilters: [agent:0]
 options:
   k3d:
     wait: true
@@ -32,11 +45,24 @@ options:
     disableLoadbalancer: true           # one server; production has no load balancer either
   k3s:
     extraArgs:
-      - arg: --cluster-init             # start on embedded etcd so servers can join later (Step 1.13)
+      - arg: --cluster-init             # start on embedded etcd so servers can join later (HA, Step 1.13)
         nodeFilters: [server:0]
+      # Only pods that tolerate this taint (tenant databases, the TopoLVM node plugin, later pg-gateway,
+      # node-exporter, Fluent Bit) run on the tenant node; NoSchedule leaves running pods alone.
+      - arg: --node-taint=dbcloud.io/pool=tenant:NoSchedule
+        nodeFilters: [agent:*]
     nodeLabels:
+      - label: dbcloud.io/pool=control
+        nodeFilters: [server:*]
       - label: dbcloud.io/pool=tenant
-        nodeFilters: [server:0]
+        nodeFilters: [agent:*]
+  runtime:
+    # Docker memory caps (k3d also scopes each node's /proc/meminfo to them, so kubelet allocatable and
+    # eviction follow): the PC's Docker/WSL VM has ~7.7 GiB, and one runaway node must not take Docker
+    # Desktop down with it. 3.5 GiB each fits the platform (~2.3 GiB requested) on server-0 and the
+    # 3-tenant capacity test (~2.2 GiB requested) on agent-0.
+    serversMemory: 3584m
+    agentsMemory: 3584m
   kubeconfig:
     updateDefaultKubeconfig: true
     switchCurrentContext: true

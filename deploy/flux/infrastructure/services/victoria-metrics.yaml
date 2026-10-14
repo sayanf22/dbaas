@@ -1,6 +1,6 @@
 # VictoriaMetrics single (plan/01 §15): one binary that stores metrics and scrapes the cluster with its
 # built-in Kubernetes service discovery (kubelet, cAdvisor, endpoints). vmagent, vmalert and Alertmanager
-# join in Step 1.3/1.7. Data sits on a TopoLVM volume on a tenant node.
+# join in Step 1.3/1.7. Platform workload: runs on a control node, data on that node's TopoLVM volume.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -38,7 +38,8 @@ spec:
         tag: v1.153.0@sha256:5eff7af5341e401471002f58d106d399e614a62f3d240f2dbc21901e49eed5dd
       # 14 days locally; production sizes retention against disk in Step 1.7.
       retentionPeriod: 14d
-      nodeSelector: {dbcloud.io/pool: tenant}
+      # Control nodes only: the tenant node (tainted) runs tenant databases and DaemonSets only.
+      nodeSelector: {dbcloud.io/pool: control}
       persistentVolume:
         enabled: true
         storageClassName: tenant-local

@@ -16,6 +16,14 @@ images:
 # (60-infrastructure.md). Sizes: peak incl. page cache measured 2026-09-30 on the local cell while applying
 # every layer (source 102 Mi, kustomize 131 Mi, helm 54 Mi) + headroom for more HelmReleases.
 patches:
+  # Platform workloads run on control nodes only (ctl-1 at launch); the tenant node is tainted for tenants.
+  # A strategic merge keeps upstream's kubernetes.io/os selector; the name is ignored, the target decides.
+  - target: {kind: Deployment, namespace: flux-system}
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: all}
+      spec: {template: {spec: {nodeSelector: {dbcloud.io/pool: control}}}}
   - target: {kind: Deployment, namespace: flux-system, name: source-controller}
     patch: |
       - op: replace
