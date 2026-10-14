@@ -1,10 +1,10 @@
 # 03 — Cost Model, Budget and Capacity (Blueprint 4.0)
 
-All prices checked 2026-09-29; the starter-VM prices (§2.2) were added 2026-10-07. USD prices are converted at **₹96 per US$** (USD/INR on 2026-09-29); re-convert at the day's rate. Prices exclude GST unless stated. Anything marked **verify** is re-checked when it is reached in the build plan.
+All prices checked 2026-09-29; the Hostinger prices (§2.2) were added 2026-10-07 and the two-VM layout with its AWS and Azure prices on 2026-10-14. USD prices are converted at **₹96 per US$** (USD/INR on 2026-09-29); re-convert at the day's rate. Prices exclude GST unless stated. Anything marked **verify** is re-checked when it is reached in the build plan.
 
 **Budget rule:** the whole platform costs **≤ ₹9,000/month**, target ₹8,000–8,500 once the admin DB is on Supabase Pro. Anything beyond that (more nodes, a second cell, HA plans) is added only when monthly revenue already covers it. VM costs are budgeted at the **renewal** price, never at an introductory price.
 
-**No provider is chosen yet.** The design runs on any provider that meets the VM checklist in §2. Prices below are reference bands from official price lists and one shortlisted example for the starter VM (Hostinger KVM 4, §2.2), not a selection.
+**No provider is chosen yet.** The design runs on any provider that meets the VM checklist in §2. Prices below come from official price lists; Hostinger KVM 2 + KVM 4 is the shortlisted planning example for the two-VM starter cell (§2.2), and AWS and Azure are priced for the same layout. None of them is a selection.
 
 ---
 
@@ -12,19 +12,20 @@ All prices checked 2026-09-29; the starter-VM prices (§2.2) were added 2026-10-
 
 | Item | What | ₹ / month |
 |---|---|---|
-| **Starter cell `c1` at launch: 1 Linux VM** (ADR-025, §6.1) | `node-1` 4 vCPU / 16 GB / 200 GB NVMe (planning example: Hostinger KVM 4) | **≤ 2,400** (KVM 4 renews at ₹2,399; the ₹1,099 intro price needs a 24-month prepay) |
-| **Reference cell `c1` from Step 1.13: 3 Linux VMs** in one region (§2) | `cp-1` 2 vCPU / 4 GB; `node-1`, `node-2` 8 vCPU / 24 GB / 200 GB NVMe | **≤ 5,600** (ceiling: cp-1 ≤ 1,000, each node ≤ 2,300) |
+| **Starter cell `c1` at launch: 2 Linux VMs** in one region (ADR-025, §6.1) | control VM `ctl-1` 2 vCPU / 8 GB / 100 GB NVMe (planning example: Hostinger KVM 2) + tenant VM `node-1` 4 vCPU / 16 GB / 200 GB NVMe (Hostinger KVM 4) | **≤ 3,600** (₹1,199 + ₹2,399 at renewal; the ₹799 + ₹1,099 intro prices need a 24-month prepay) |
+| Growth tenant nodes `node-2`, `node-3`, … (§7) | 4 vCPU / 16 GB / 200 GB NVMe each | + ≤ 2,400 each, added as §7 describes |
+| HA control plane from Step 1.13 (§6) | `ctl-2`, `ctl-3` 2 vCPU / 8 GB each | + ≤ 2,400 (2 × ₹1,199), when revenue covers it |
 | Admin DB + Auth | Supabase Free at launch → Pro at the §7 trigger | 0 → **2,400** |
 | Cloudflare | DNS, Tunnel, Access, WAF, Turnstile, Workers Static Assets | 0 |
-| Cloudflare R2 | backups: 10 GB free, then US$0.015/GB-month | ~0–200 typical (≤ 940 with every tenant disk full) |
+| Cloudflare R2 | backups: 10 GB free, then US$0.015/GB-month | ~0–260 per full tenant node (§8) |
 | Transactional email | SMTP service with a free tier ≥ 3,000/month (§3) | 0 |
 | GitHub Free + ghcr.io | code, CI, private container images | 0 |
 | Domain | `.com` or `.in` | ~55–85 |
-| **Total** | | **≈ ₹2,470 at launch (starter cell, renewal price); ≈ ₹5,700–5,900 on the reference cell; ≈ ₹8,100–8,300 with Supabase Pro** |
+| **Total** | | **≈ ₹3,670 at launch (starter cell, renewal prices; ≈ ₹1,970 during a prepaid intro term); ≈ ₹6,070 with `node-2`; ≈ ₹8,470 with `node-2` + Supabase Pro** |
 
-**Launch runs on the starter cell (ADR-025):** only `node-1`. At the renewal price it costs ₹2,399 + domain ≈ ₹70 = **≈ ₹2,470/month** and breaks even at **9 `base` tenants**; on the intro price (₹1,099 + ₹70 ≈ ₹1,170) it breaks even at 5 (§6.1, §7). It holds ≈ 12 `base` tenants; at 80 % (≈ 10) the owner decides whether to grow into the reference cell (Step 1.13) or waitlist new sign-ups.
+**Launch runs on the two-VM starter cell (ADR-025):** `ctl-1` runs K3s's server and the whole platform, `node-1` runs only tenant databases. At renewal prices it costs ₹1,199 + ₹2,399 + domain ≈ ₹70 = **≈ ₹3,668/month** and breaks even at **13 `base` tenants**; on the intro prices (₹799 + ₹1,099 + ₹70 = ₹1,968) at 7 (§6.1, §7). It holds ≈ 17 `base` tenants; at 80 % (≈ 14) the owner decides whether to add `node-2` or waitlist new sign-ups. GST may be added to the VM invoices at checkout (**verify** at Step 1.1).
 
-Worst case on the reference cell (every tenant disk full on both nodes, i.e. ~47 paying tenants) is ≈ ₹9,025 with Supabase Pro, and by then revenue is ≈ ₹14,050/month.
+Inside the ≤ ₹9,000 cap the platform reaches `ctl-1` + `node-1` + `node-2` + Supabase Pro ≈ ₹8,470 (+ R2 ≈ ₹510 with both tenant nodes full of `base` tenants, 2 × ₹256, §8: ≈ ₹8,980), holding ≈ 34 `base` tenants with ≈ ₹10,170/month revenue ex-GST. Anything beyond that (a third tenant node, the HA control plane) is paid from revenue (§7).
 
 Paid from revenue, not the budget: Razorpay takes ≈ **₹12.45** of each ₹352.82 `base` payment (2.99 % + GST on the fee). One-time costs: ₹199 Razorpay KYC and the domain's first year.
 
@@ -40,8 +41,8 @@ Local development costs ₹0: Docker + k3d + `supabase start` (build plan Phase 
 |---|---|---|
 | 1 | Region in India, or ≤ 70 ms RTT from Mumbai/Bengaluru (for example Singapore) | customer latency |
 | 2 | KVM (or equivalent full virtualization), root access, Ubuntu 24.04 LTS image, x86_64 or arm64 | K3s, WireGuard kernel module, LVM |
-| 3 | Local SSD/NVMe; a disk layout with ≥ 150 GB left for LVM on each node (custom partitioning at install, or a second local/attached disk) | TopoLVM `tenantvg` |
-| 4 | **Free private network** between the three VMs in the same region (needed from Step 1.13; the one-VM starter cell doesn't use it, but the provider is checked for it at Step 1.1) | K3s embedded etcd needs servers on a private network in one location |
+| 3 | Local SSD/NVMe; on each tenant VM a disk layout with ≥ 150 GB left for LVM after a ≈ 30 GB root (custom partitioning at install, or a second local/attached disk); control VMs ≥ 80 GB SSD for etcd, images and logs | TopoLVM `tenantvg`; etcd fsync latency |
+| 4 | **Free private network** between the cell's VMs in the same region: preferred, verified at Step 1.1 (spike S8), not a blocker. Without one, the tenant VM joins over public IPs with nftables allow-lists (6443, 10250, 51820–51821/udp and 5001 only from the other node's IP) and flannel `wireguard-native` encrypts all pod traffic; the K3s API is TLS | node-to-node traffic from day one (`ctl-1` ↔ `node-1`); K3s embedded etcd needs its servers in one location (Step 1.13) |
 | 5 | One public IPv4 per VM included; inbound firewall (provider or host) | Postgres entry on port 5432 |
 | 6 | Included outbound transfer ≥ 3 TB/month per node, no throttling below that | backup uploads + customer traffic |
 | 7 | Flat monthly (or capped hourly) price, no long lock-in required | predictable bill under the cap |
@@ -49,39 +50,51 @@ Local development costs ₹0: Docker + k3d + `supabase start` (build plan Phase 
 | 9 | Reinstall/rebuild and a console for break-glass access | recovery |
 | 10 | Nice to have: API + Terraform provider, snapshots, floating IP | automation (the design works without them) |
 
-### 2.2 Reference price bands (official price lists, 2026-09-29)
+### 2.2 The two-VM starter cell on Hostinger, AWS and Azure (checked 2026-10-14, all **verify**)
 
-| Provider class | 2 vCPU / 4 GB | 8 vCPU / 24–32 GB | Reference cell (1 × small + 2 × large) | Fits the cap? |
+The same layout on each provider: a control VM (2 vCPU / 8 GB) + a tenant VM (4 vCPU / 16 GB), both in one region, 730 hours a month, Linux, on-demand or monthly term. Break-even uses ₹286.55 net per `base` tenant (§7) and the ≈ 17 `base` a 4 vCPU / 16 GB tenant VM holds (§6.1).
+
+| Provider (region) | Control VM | Tenant VM | Disks, IPv4, transfer | ₹/month for the cell | Within ≤ ₹9,000? | Breaks even on one tenant VM? |
+|---|---|---|---|---|---|---|
+| **Hostinger** (India, Mumbai) | KVM 2: 2 vCPU / 8 GB / 100 GB NVMe, ₹1,199 renewal (₹799 intro) | KVM 4: 4 vCPU / 16 GB / 200 GB NVMe, ₹2,399 renewal (₹1,099 intro) | NVMe, one IPv4 and 8 + 16 TB transfer included | **₹3,598** renewal (₹1,898 intro) | **yes** | **yes: 13 of ≈ 17** at renewal, 7 on intro prices |
+| **AWS Lightsail** (`ap-south-1`, Mumbai) | US$44: 2 vCPU / 8 GB / 160 GB SSD | US$84: 4 vCPU / 16 GB / 320 GB SSD | static IPv4 and SSD included; transfer 5 + 6 TB per the bundles, but Mumbai bundles include half (2.5 + 3 TB) | **≈ ₹12,288** (US$128) | no | no: needs (12,288 + 70) ÷ 286.55 = 44 tenants |
+| AWS EC2 `t4g` (`ap-south-1`) | `t4g.large` 2 vCPU / 8 GiB, ≈ US$0.0448/h ≈ US$32.70 | `t4g.xlarge` 4 vCPU / 16 GiB, ≈ US$0.0896/h ≈ US$65.41 | plus EBS volumes, US$0.005/h per public IPv4 and internet egress (US$0.11–0.12/GB after the free allowance); burstable CPU credits: sustained load above the baseline is throttled (standard mode) or billed (unlimited mode) | **≈ ₹9,419** for the two instances alone (US$98.11), before disks, IPv4 and egress | no | no |
+| **Azure** B-series (Central India) | `B2as_v2` 2 vCPU / 8 GiB, US$0.0492/h = US$35.92 | `B4as_v2` 4 vCPU / 16 GiB, US$0.0984/h = US$71.83 | no local data disk: Premium SSD managed disks P10 128 GiB US$19.71 + P15 256 GiB US$38.01; 2 static IPv4 × US$3.65; egress: first 100 GB/month free, then US$0.12/GB (Microsoft network) or US$0.11/GB (routing preference Internet). Burstable: CPU credits, sustained use above the baseline is throttled | **≈ ₹16,586** (US$172.77) + egress; ≈ ₹14,086 with Standard SSD E10 + E15 (US$10.56 + US$21.12) | no | no |
+| Azure D-series (Central India) | `D2as_v5` 2 vCPU / 8 GiB, US$0.0556/h = US$40.59 | `D4as_v5` 4 vCPU / 16 GiB, US$0.111/h = US$81.03 | same disks and IPv4 as above; no CPU credits | **≈ ₹17,917** (US$186.64) + egress | no | no |
+| Azure (South India) | `B2as_v2` US$0.106/h, `D2as_v5` US$0.121/h | `B4as_v2` US$0.212/h, `D4as_v5` US$0.243/h | as above | about twice Central India | no | no |
+
+What the table says:
+- **Only the value-VPS class fits the budget and breaks even.** On Hostinger the cell costs ≈ ₹3,670 with the domain, breaks even at 13 `base` tenants and nets ≈ ₹1,200/month when full (§7). AWS Lightsail costs ≈ 3.4× as much and AWS EC2 or Azure ≈ 2.6–5× before egress; none of them breaks even on one tenant VM, and each alone is above or close to the whole ≤ ₹9,000 budget.
+- **Egress is the hidden cost on AWS EC2 and Azure:** every backup upload to R2 leaves the provider (≈ 4.96 × the stored data per month, §8). A tenant VM holding 85 GB of `base` data uploads ≈ 420 GB/month, ≈ US$35–39 on Azure after the free 100 GB (320 GB × US$0.11–0.12). Lightsail and Hostinger include the transfer.
+- **Disks:** Azure `Basv2`/`Dasv5` and EC2 have no local NVMe for data; `tenantvg` and etcd would sit on network-attached managed disks (the VM's own disk, not an extra storage service). That is allowed by ADR-004 only if spike S2's fsync and latency limits pass on them (checklist items 3 and 8).
+- **Burstable CPU** (Azure B-series, AWS `t4g`, Lightsail bundles): the cell's steady load (Postgres, etcd, the platform) must stay within the baseline, which spike S2 measures as sustained CPU and steal; otherwise use a non-burstable size.
+- **A cell never spans providers** (ADR-002): AWS or Azure become a separate cell, with their own control VM, when revenue pays for it (`04-…` §7). The mainstream-VPS class (for example DigitalOcean, Vultr, Akamai/Linode, Hetzner) and other value-VPS providers (for example OVHcloud, Contabo) were priced only for the earlier VM shapes on 2026-09-29 (mainstream 2 vCPU / 4 GB at ≈ US$20–31, value 8 vCPU / 24 GB at ≈ ₹1,200–2,300); they are re-priced for these two shapes in the Step 0.0 shortlist.
+- Prices exclude GST; the US$ rows are on-demand list prices before any reservation or savings plan, converted at ₹96 per US$.
+
+**Hostinger KVM plans (India, Mumbai data center).** Prices as published on hostinger.in on 2026-09-14 (re-read on hostinger.in at Step 1.1, **verify**); taxes may be added at checkout. Hostinger sells only KVM VPS now (OpenVZ renewals ended 2026-03-01). Per-role capacity from §6.1.
+
+| Plan | vCPU / RAM / NVMe / transfer | Intro ₹/month (24-month prepay) | Renewal ₹/month | Fit in the cell (§6.1) |
 |---|---|---|---|---|
-| **Value VPS** (for example OVHcloud VPS, Contabo Cloud VPS) | ≈ ₹420–600 | ≈ ₹1,200–2,300 (8/24, 200–300 GB NVMe/SSD) | **≈ ₹2,800–5,600** | **yes** |
-| Mainstream VPS (for example DigitalOcean, Vultr, Akamai/Linode, Hetzner) | ≈ ₹1,900–3,000 (US$20–31) | ≈ ₹15,400–29,500 (US$160–307, 8/32) | ≈ ₹33,000+ | no |
-| Hyperscalers (for example AWS `ap-south-1`, GCP `asia-south1`) | ≈ ₹1,600–3,100 (US$16–33) + disk | ≈ ₹16,300–28,300 (US$170–295) + disk + egress (US$0.11–0.12/GB) | ≈ ₹35,000+ | no |
+| KVM 1 | 1 / 4 GB / 50 GB / 4 TB | 599 | 999 | **rejected for both roles:** 1 vCPU is below K3s's 2-core server minimum, and as a tenant VM it holds ≈ 3 `base` |
+| **KVM 2** | **2 / 8 GB / 100 GB / 8 TB** | **799** | **1,199** | **control VM `ctl-1`** (and `ctl-2`, `ctl-3` at Step 1.13). As a cheaper first tenant VM it holds ≈ 7 `base` and breaks even only on intro prices (§6.1) |
+| **KVM 4** | **4 / 16 GB / 200 GB / 16 TB** | **1,099** | **2,399** | **tenant VM `node-1`** and growth nodes: ≈ 17 `base` |
+| KVM 8 | 8 / 32 GB / 400 GB / 32 TB | 2,199 | 4,399 | a larger tenant VM later: ≈ 36 `base` ((32 − 1.1 − 0.33) GiB × 0.85 ≈ 26,600 Mi ÷ 720 = 36.9); with `ctl-1` it breaks even at 20 ((₹1,199 + ₹4,399 + ₹70) ÷ ₹286.55 = 19.8) |
 
-**Shortlisted value-VPS example for the starter VM: Hostinger KVM (India, Mumbai data center).** Prices as published on hostinger.in on 2026-09-14 (re-read on hostinger.in at Step 1.1, **verify**); taxes may be added at checkout. Hostinger sells only KVM VPS now (OpenVZ renewals ended 2026-03-01).
+Open points for Step 1.1 / spike S2 / S8 (checklist §2.1): **item 4**, whether Hostinger offers a free private network between VPSs (not found in its documentation on 2026-10-07). The two-VM cell uses node-to-node traffic from day one; without a private network `node-1` joins `ctl-1` over public IPs with nftables allow-lists and WireGuard after S8 measures latency and loss. This is recorded at Step 1.1, not a blocker. **Item 7**, the intro prices need a 24-month prepay; the monthly-term price is checked at order time and the budget uses the renewal price. **Item 8**, sustained CPU, steal and fio/fsync are measured in S2 on both VMs. **Item 3**, how much of `node-1`'s 200 GB disk can become `tenantvg` (§6.1 plans 170 GB).
 
-| Plan | vCPU / RAM / NVMe / transfer | Intro ₹/month (24-month prepay) | Renewal ₹/month | Fit for the starter cell (§6.1) |
-|---|---|---|---|---|
-| KVM 1 | 1 / 4 GB / 50 GB / 4 TB | 599 | 999 | **rejected:** 1 vCPU can't hold the 700m node reservation plus the ≈ 720m starter platform |
-| KVM 2 | 2 / 8 GB / 100 GB / 8 TB | 799 | 1,199 | **rejected for launch:** holds ≈ 3 `base` but break-even needs 5 (§6.1) |
-| **KVM 4** | **4 / 16 GB / 200 GB / 16 TB** | **1,099** | **2,399** | **launch choice (planning example):** ≈ 12 `base`, break-even 9 at renewal |
-| KVM 8 | 8 / 32 GB / 400 GB / 32 TB | 2,199 | 4,399 | holds ≈ 32 `base` but breaks even only at 16; above the ≤ ₹2,400 starter ceiling |
-
-Open points for Step 1.1 / spike S2 / S8 (checklist §2.1): **item 4**, whether Hostinger offers a free private network between VPSs (not found in its documentation on 2026-10-07). It isn't needed by the one-VM starter cell, but the reference cell needs it. If there is none, Step 1.13 either joins the servers over public IPs (nftables allow-lists between the node IPs only, flannel `wireguard-native` encrypting all node traffic) after S8 measures latency and loss, or the reference cell is built at a provider that has one (a new cell plus tenant migration, ADR-002). **Item 7**, the intro price needs a 24-month prepay; the monthly-term price is checked at order time and the budget uses the renewal price. **Item 8**, sustained CPU, steal and fio/fsync are measured in S2. **Item 3**, how much of the 200 GB disk can become `tenantvg` (§6.1 plans 150 GB).
-
-- Only the value-VPS class meets the cap with a useful cell. Its trade-offs are shared vCPUs, weaker SLAs, and discounts tied to longer terms. That is why checklist items 7–8 and spike S2 decide, not the price alone.
-- Hostinger's larger plans don't fit the reference-cell ceilings at renewal (KVM 8 at ₹4,399 is above the ≤ ₹2,300 node ceiling), so the reference cell's provider is decided again against §2.1 at Step 1.13.
+- Value-VPS trade-offs are shared vCPUs, weaker SLAs and discounts tied to longer terms. That is why checklist items 7–8 and spike S2 decide, not the price alone.
 - Some value providers serve India from nearby regions (checklist item 1 applies). Location surcharges and India-specific prices must be read at order time (**verify**).
-- Hyperscalers stay the Phase 5 option (a second cell on AWS or GCP) once revenue pays for them (`04-…` §7).
+- Hyperscalers (AWS, Azure, GCP) stay the Phase 5 option for a second cell once revenue pays for them (`04-…` §7).
 
-### 2.3 Can the control plane run on one small VM and the rest on AWS or GCP?
+### 2.3 Can the control VM run at one provider and the tenant VMs on AWS, Azure or GCP?
 
 Technically yes: K3s supports agents in other networks (flannel `wireguard-native` with `--node-external-ip`, or its experimental Tailscale integration). It isn't used here, for four reasons:
-1. K3s supports embedded etcd only when all servers share a private network in one location. A split setup leaves a single control-plane VM, or a stretched datastore.
-2. Every kubelet ↔ API-server byte leaving AWS or GCP is billed as internet egress (US$0.11–0.12/GB after the free allowance), and the tunnel adds latency.
+1. K3s supports embedded etcd only when all servers share one location. A split setup leaves the control plane at one provider for good, or a stretched datastore once `ctl-2`/`ctl-3` join.
+2. Every kubelet ↔ API-server byte and every backup upload leaving AWS, Azure or GCP is billed as internet egress (US$0.11–0.12/GB after the free allowance), and the long path adds latency.
 3. When the link breaks for more than ~50 s, nodes turn `Unknown`: nothing can be changed, restarted or failed over until it heals.
-4. The worker VMs on a hyperscaler cost 5–6× the value-VPS price, which alone breaks the budget.
+4. A tenant VM on a hyperscaler costs ≈ 3.4–4.5× the value-VPS price (Lightsail US$84 ≈ ₹8,064, Azure `B4as_v2` + P15 + IPv4 ≈ US$113.49 ≈ ₹10,895, vs Hostinger KVM 4 at ₹2,399), which alone breaks the budget.
 
-So a cell stays in **one provider and one region**. A future AWS or GCP presence is a **separate cell** registered with the same control plane (architecture §5.3).
+So a cell stays in **one provider and one region**. A future AWS, Azure or GCP presence is a **separate cell** registered with the same control plane (architecture §5.3).
 
 ---
 
@@ -129,11 +142,15 @@ Each tenant runs **two pods**: the Postgres pod (Postgres container + the Barman
 
 ---
 
-## 6. Capacity of the reference cell
+## 6. Capacity: reservations, platform footprint, growth and HA
 
-**Node reservations** (each node is also a K3s server with embedded etcd): `kube-reserved` 500m / 2 GiB (the K3s server process: API server, etcd, controllers; K3s profiling measured ~1.6 GB) + `system-reserved` 200m / 512 Mi + eviction threshold 100 Mi. `cp-1` carries the taint `CriticalAddonsOnly=true:NoExecute`, so it runs only the control plane and holds no tenants.
+**Node pools** (architecture §5.2): control VMs (`ctl-1`; `ctl-2`, `ctl-3` from Step 1.13) are K3s servers labelled `dbcloud.io/pool=control` and run the platform, never tenants. Tenant VMs (`node-1`, `node-2`, …) are K3s agents labelled `dbcloud.io/pool=tenant` and tainted `dbcloud.io/pool=tenant:NoSchedule`; they run tenant pods, the per-node DaemonSets and one CoreDNS replica.
 
-**Platform footprint** (requests, spread over `node-1` and `node-2`; platform pods have memory limits = requests and no CPU limits):
+**Node reservations per role** (kubelet flags, `60-infrastructure.md`):
+- Control VM (K3s server with embedded etcd): `kube-reserved` 500m / 2 GiB (the K3s server process: API server, etcd, controllers; K3s profiling measured ~1.6 GB, so 2 GiB is a planning figure re-measured at Step 1.3) + `system-reserved` 200m / 512 Mi + eviction threshold 100 Mi = **700m / 2.6 GiB**.
+- Tenant VM (K3s agent): `kube-reserved` 250m / 640 Mi (K3s agent + containerd measured on the local tenant node 2026-10-14: p95 479 MiB / 193m over a busy period, + 25 %) + `system-reserved` 200m / 512 Mi + eviction threshold 100 Mi = **450m / 1,252 Mi ≈ 1.2 GiB**.
+
+**Platform footprint with 2 replicas** (the HA control plane from Step 1.13; requests; platform pods have memory limits = requests and no CPU limits). The starter cell runs 1 replica of each (§6.1). The per-node rows (TopoLVM node plugin and pg-gateway on tenant VMs; node-exporter and Fluent Bit on every VM) were planned for two nodes and scale with the node count:
 
 | Component | Pods | CPU | Memory |
 |---|---|---|---|
@@ -153,72 +170,82 @@ Each tenant runs **two pods**: the Postgres pod (Postgres container + the Barman
 
 The rows for components that already run on the local cell (K3s add-ons, TopoLVM, cert-manager, CNPG + plugin, Flux, VictoriaMetrics single) are the requests measured and set in Step 0.3 (2026-09-30); the others stay planning values until their step. K3s's packaged CoreDNS (70 Mi request, 170 Mi limit) and metrics-server (70 Mi, no limit) don't yet have limit = request; Step 1.3 replaces their packaged manifests with sized copies.
 
-**Left for tenants on the two nodes** after reservations, the platform and 15 % headroom: CPU ≈ **11,690m**, memory ≈ **33.4 GiB**, pod slots ≈ **90** tenants (max pods 110 per node), disk ≈ **300 GB** of `tenantvg` (200 GB NVMe − ~50 GB root and etcd per node).
+**Growth tenant nodes:** every added tenant VM of the `node-1` shape (4 vCPU / 16 GB / 200 GB) brings the capacity in §6.1 Table B (≈ 17 `base`, ≈ 10 `plus` or ≈ 5 `premium`), its own pg-gateway and its own A record. A larger tenant VM (8 vCPU / 32 GB, Hostinger KVM 8) holds ≈ 36 `base` (§2.2). The real allocatable values are read in Step 1.3 and replace these planning numbers.
 
-| Plan | Bound by CPU | memory | pods | disk | **Tenants per reference cell** | Revenue when full (ex-GST) |
-|---|---|---|---|---|---|---|
-| `base` | 106 | 47 | 90 | 60 | **~47** | ₹14,053 |
-| `plus` | 45 | 27 | 90 | 30 | **~27** | ₹18,873 |
-| `premium` | 22 | 15 | 90 | 15 | **~15** | ₹20,985 |
+**HA control plane (Step 1.13):** `ctl-2` and `ctl-3` (same shape as `ctl-1`) join the embedded etcd. The three control VMs have 3 × (8 − 2.6) = 16.2 GiB and 3 × 1,300m allocatable for the ≈ 3.5 GiB / 850m platform above, so any two of them still hold the whole platform (10.8 GiB, 2,600m) when one is lost. Tenant capacity doesn't change: tenants never run on control VMs.
 
-These numbers assume both tenant nodes have the reference shape (8 vCPU / 24 GB). If the starter VM (4 vCPU / 16 GB, §6.1) stays `node-1` after Step 1.13 instead of being resized or replaced, this table is recomputed at Step 1.13 with the real allocatable of both nodes.
+**Node loss:** tenant VMs run near full, so the other tenant VMs can't absorb a lost node's tenants. A lost tenant VM is replaced (a new VM joins with the same config) and its tenants restore from R2; the published RTO comes from the node-loss drill. Losing `ctl-1` on the starter cell stops management (API, dashboards, provisioning return `503` + `Retry-After`) while running databases keep serving (architecture §1); from Step 1.13 the platform survives the loss of any one control VM.
 
-Memory binds first for every plan, so a node with more RAM (8 vCPU / 32 GB, 300 GB) raises capacity to ~66 `base` / ~39 `plus` / ~21 `premium` if the chosen provider offers it within the ceiling. The real allocatable values are read in Step 1.3 and replace these planning numbers.
+### 6.1 Starter cell: two VMs (ADR-025)
 
-**Node loss:** the two nodes run near full, so the survivor can't absorb the other node's tenants. A lost node is replaced (a new VM joins with the same config) and its tenants restore from R2; the published RTO comes from the node-loss drill. The platform itself survives the loss of any one VM (architecture §1).
+Two VMs in one region: **`ctl-1`**, the control VM (planning example: Hostinger KVM 2, 2 vCPU / 8 GB / 100 GB NVMe, ₹1,199/month at renewal, §2.2), runs K3s's single server with embedded etcd and the platform with **one replica** per component; **`node-1`**, the tenant VM (Hostinger KVM 4, 4 vCPU / 16 GB / 200 GB NVMe, ₹2,399/month at renewal), runs only the tenants and the per-node pods. 15 % headroom on the tenant VM's CPU and memory. These are planning values: "8 GB" and "16 GB" are taken as GiB, and the real allocatable is read at Step 1.3 and replaces them.
 
-### 6.1 Starter cell: one VM (ADR-025)
+**Table A, control VM `ctl-1`** (holds no tenants):
 
-One **4 vCPU / 16 GB / 200 GB NVMe** VM (planning example: Hostinger KVM 4, ₹2,399/month at renewal, §2.2; ceiling ≤ ₹2,400) runs K3s as a single server with embedded etcd, the platform with **one replica** per component (≈ 720m CPU, ≈ 2.9 GiB memory, ≈ 35 pods) and the tenants. Reservations as above (2.6 GiB = `kube-reserved` 2 GiB + `system-reserved` 512 Mi + eviction 100 Mi; CPU 700m); 15 % headroom on CPU and memory. These are planning values: "16 GB" is taken as 16 GiB, and the real allocatable is read at Step 1.3 and replaces them.
+| Item | CPU | Memory | Pods |
+|---|---|---|---|
+| VM (2 vCPU / 8 GiB) | 2,000m | 8 GiB | 110 |
+| Server reservations: `kube-reserved` 500m / 2 GiB + `system-reserved` 200m / 512 Mi + eviction 100 Mi | 700m | 2.6 GiB | — |
+| Platform, 1 replica each: the starter footprint (≈ 720m, ≈ 2.9 GiB, ≈ 35 pods) minus the TopoLVM node plugin (128 Mi) and pg-gateway (64 Mi), ≈ 20m together, which run on `node-1` (node-exporter and Fluent Bit run on both VMs; Fluent Bit on `ctl-1` also ships the K3s audit log) | ≈ 700m | ≈ 2.7 GiB | ≈ 33 |
+| **Left** | **≈ 600m** | **≈ 2.7 GiB** (≈ 2.5 GiB if the full 2.9 GiB is kept as a margin) | **≈ 77** |
 
-Arithmetic (left for tenants = (VM − reservations − platform) × 0.85):
-- Memory: (16 − 2.6 − 2.9) GiB × 0.85 = 10.5 × 0.85 = 8.925 GiB ≈ 9,139 Mi.
-- CPU: (4,000 − 700 − 720)m × 0.85 = 2,580 × 0.85 ≈ 2,193m.
-- Pods: (110 − 35) ÷ 2 pods per tenant = 37.
-- Disk: 200 GB − ~50 GB root and etcd = 150 GB `tenantvg`.
+The spare ≈ 2.7 GiB (≈ 34 % of the VM) absorbs request growth measured at Step 1.3 and the 2 GiB `kube-reserved` estimate (the K3s profiling figure, re-measured at Step 1.3). It is not tenant capacity.
 
-| Plan | Bound by CPU | memory | pods | disk (150 GB `tenantvg`) | **Tenants on the starter VM** |
+**Table B, tenant VM `node-1`:**
+
+| Item | CPU | Memory | Pods | Disk |
+|---|---|---|---|---|
+| VM (4 vCPU / 16 GiB / 200 GB) | 4,000m | 16,384 Mi | 110 | 200 GB |
+| Agent reservations: `kube-reserved` 250m / 640 Mi + `system-reserved` 200m / 512 Mi + eviction 100 Mi | 450m | 1,252 Mi | — | root ≈ 30 GB |
+| Per-node pods: TopoLVM node plugin 128 Mi, pg-gateway 64 Mi, node-exporter 32 Mi, Fluent Bit 48 Mi (≈ 40m together) + one CoreDNS replica 100m / 70 Mi, so name resolution on the tenant VM survives a `ctl-1` outage | 140m | 342 Mi | 5 | — |
+| **Left for tenants** after 15 % headroom | (4,000 − 450 − 140) × 0.85 = **2,898m** | (16,384 − 1,252 − 342) × 0.85 = **12,571 Mi** (≈ 12.3 GiB) | (110 − 5) ÷ 2 per tenant = **52 tenants** | 200 − 30 = **170 GB** `tenantvg` |
+
+| Plan | Bound by CPU | memory | pods | disk (170 GB) | **Tenants on `node-1`** |
 |---|---|---|---|---|---|
-| `base` (110m / 720 Mi / 5 GB) | 19 | 12 | 37 | 30 | **~12** |
-| `plus` (260m / 1,232 Mi / 10 GB) | 8 | 7 | 37 | 15 | **~7** |
-| `premium` (510m / 2,256 Mi / 20 GB) | 4 | 4 | 37 | 7 | **~4** |
+| `base` (110m / 720 Mi / 5 GB) | 26 | 17 | 52 | 34 | **~17** |
+| `plus` (260m / 1,232 Mi / 10 GB) | 11 | 10 | 52 | 17 | **~10** |
+| `premium` (510m / 2,256 Mi / 20 GB) | 5 | 5 | 52 | 8 | **~5** |
 
-(CPU: 2,193 ÷ 110 = 19.9, ÷ 260 = 8.4, ÷ 510 = 4.3; memory: 9,139 ÷ 720 = 12.7, ÷ 1,232 = 7.4, ÷ 2,256 = 4.05; rounded down.) Memory binds first, as on the reference cell.
+(CPU: 2,941 ÷ 110 = 26.7, ÷ 260 = 11.3, ÷ 510 = 5.8; memory: 12,680 ÷ 720 = 17.6, ÷ 1,232 = 10.3, ÷ 2,256 = 5.6; rounded down.) Memory binds first for `base` and `plus`; for `premium` CPU and memory tie.
 
-- **Why not a smaller VM:** a 2 vCPU / 8 GB VM (Hostinger KVM 2, ₹1,199) leaves (8 − 2.6 − 2.9) × 0.85 = 2.1 GiB ≈ 2,176 Mi, i.e. ≈ 3 `base` tenants (2,176 ÷ 720 = 3.0), while break-even needs (₹1,199 + ₹70) ÷ ₹286.55 = 4.4, so 5. It can never break even. A 1 vCPU VM can't hold the reservations and the platform at all.
-- **Why not a bigger VM yet:** 8 vCPU / 32 GB (Hostinger KVM 8, ₹4,399) holds ≈ 32 `base` ((32 − 5.5) × 0.85 = 22.5 GiB ≈ 23,066 Mi ÷ 720 = 32.0) but breaks even only at 16 ((₹4,399 + ₹70) ÷ ₹286.55 = 15.6), above the starter ceiling.
-- **Local measurements (2026-09-30, k3d on 4 CPUs / 8 GB):** with the earlier 96 Mi sidecar, 10 `base` tenants scheduled at 88 % of node memory *requests*; with the measured 160 Mi sidecar the same 8 GB node holds 7 (92 % of requests), which matches this table's arithmetic. Real use at idle ≈ 104–127 MiB per tenant (Postgres + backup sidecar + PgBouncer). Requests stay equal to limits, so the planning numbers above don't count on that slack.
-- **Growth:** at 80 % of the starter VM (0.8 × 12 = 9.6, so ≈ 10 `base` tenants) the owner chooses: `cp-1` and `node-2` join and the cell becomes the reference cell of §6 (Step 1.13, ≈ ₹3,300/month more, inside the ≤ ₹9,000 budget), or new sign-ups are waitlisted until growth is funded (`max_nodes`, §7). The starter VM's own revenue can't pay for that step: full, it nets ≈ ₹970/month (§7).
+- **Why two VMs, not one:** tenant load can't starve the K3s server, etcd or the platform; the tenant VM's memory goes to databases (a single 16 GB VM would also carry the 2.6 GiB server reservation and the 2.9 GiB platform, leaving (16 − 2.6 − 2.9) × 0.85 ≈ 8.9 GiB for tenants instead of `node-1`'s 12.4 GiB); `ctl-1` down leaves the databases serving; a container escape on `node-1` reaches only that node's credentials (ADR-025, architecture §1).
+- **A cheaper first tenant VM:** `node-1` as a 2 vCPU / 8 GB VM (Hostinger KVM 2) leaves (8,192 − 1,124 − 342) × 0.85 = 5,717 Mi, ≈ 7 `base` (5,717 ÷ 720 = 7.9; CPU (2,000 − 400 − 140) × 0.85 = 1,241m ÷ 110 = 11; disk 70 GB ÷ 5 = 14). The cell then costs ₹1,199 + ₹1,199 + ₹70 = ₹2,468 at renewal and needs 2,468 ÷ 286.55 = 8.6, so 9 tenants: it never breaks even at renewal. On intro prices (₹799 + ₹799 + ₹70 = ₹1,668, break-even 5.8, so 6) it does, and a full one nets ≈ +₹338. It is an option only for the prepaid term, resized to KVM 4 before the intro price ends.
+- **Local measurements (2026-09-30, k3d on 4 CPUs / 8 GB):** with the earlier 96 Mi sidecar, 10 `base` tenants scheduled at 88 % of node memory *requests*; with the measured 160 Mi sidecar the same 8 GB node holds 7 (92 % of requests), which matches this arithmetic. Real use at idle ≈ 104–127 MiB per tenant (Postgres + backup sidecar + PgBouncer). Requests stay equal to limits, so the planning numbers above don't count on that slack.
+- **Growth:** at 80 % of `node-1` (0.8 × 17 = 13.6, so ≈ 14 `base` tenants) the owner chooses: `node-2` joins as a second tenant agent (+ ₹2,399/month, the cell then costs ≈ ₹6,067 and holds ≈ 34 `base`, inside the ≤ ₹9,000 budget), or new sign-ups are waitlisted until growth is funded (`max_nodes`, §7). A full `node-1` nets ≈ ₹1,203/month (§7), less than `node-2` costs, so the step is an owner decision paid partly from the budget until `node-2` fills.
 
 ---
 
 ## 7. Break-even and when money is spent
 
-**Starter cell (ADR-025), `base` tenants, Supabase Free:** cost ≈ ₹2,469/month at the renewal price (KVM 4 ₹2,399 + domain ≈ ₹70; R2, email, Cloudflare and GitHub inside free tiers). Each `base` tenant nets ₹299 − ₹12.45 fee = ₹286.55. Break-even = 2,469 ÷ 286.55 = 8.6, so **9 tenants**.
+**Starter cell (ADR-025), `base` tenants, Supabase Free:** cost ≈ ₹3,668/month at renewal prices (`ctl-1` KVM 2 ₹1,199 + `node-1` KVM 4 ₹2,399 + domain ≈ ₹70; R2, email, Cloudflare and GitHub inside free tiers; GST on the VM invoices, if charged, comes on top). Each `base` tenant nets ₹299 − ₹12.45 fee = ₹286.55. Break-even = 3,668 ÷ 286.55 = 12.8, so **13 tenants**.
 
 | `base` tenants | Revenue ex-GST | Fees | Cost | Net ₹/month |
 |---|---|---|---|---|
-| 5 | 1,495 | 62 | ~2,469 | −1,036 |
-| **9 (break-even)** | 2,691 | 112 | ~2,469 | **+110** |
-| 10 (grow trigger, 80 %) | 2,990 | 125 | ~2,469 | +397 |
-| 12 (starter full) | 3,588 | 149 | ~2,469 | +970 |
+| 7 | 2,093 | 87 | ~3,668 | −1,662 |
+| 9 | 2,691 | 112 | ~3,668 | −1,089 |
+| **13 (break-even)** | 3,887 | 162 | ~3,668 | **+57** |
+| 14 (grow trigger, 80 %) | 4,186 | 174 | ~3,668 | +344 |
+| 17 (`node-1` full) | 5,083 | 212 | ~3,668 | +1,203 |
 
-On the intro price (≈ ₹1,169/month while the prepaid 24-month term lasts; ₹1,099 × 24 = ₹26,376 paid up front) break-even is 1,169 ÷ 286.55 = 4.1, so **5 tenants** (+264/month), and a full starter VM nets ≈ +₹2,270. Plans are made on the renewal row above.
+On the intro prices (₹799 + ₹1,099 + ₹70 = ₹1,968/month while the prepaid 24-month term lasts; (₹799 + ₹1,099) × 24 = ₹45,552 paid up front) break-even is 1,968 ÷ 286.55 = 6.9, so **7 tenants** (+38/month), and a full `node-1` nets ≈ +₹2,903. Plans are made on the renewal rows above.
 
-**Reference cell (after Step 1.13):**
+**Growth stages (renewal prices, `base` tenants, R2 excluded):**
 
-| Stage | `base` tenants | Revenue ₹/month | Cost ₹/month | Net ₹/month |
-|---|---|---|---|---|
-| Reference cell, Supabase Free | 1–19 | 299–5,681 | ~5,700–6,000 | −5,400 → −300 |
-| Break-even | ~20 | ~5,980 | ~6,000 | ≈ 0 |
-| Supabase Pro | from ~30 (trigger below) | 8,970+ | ~8,400–8,600 | positive |
-| Cell full | ~47 | ~14,050 | ~8,900 | ≈ +5,150 |
-| 3rd node (8 vCPU / 24 GB) | 47+ | | + ≤ 2,300 | added only when net ≥ its cost |
+| Stage | VMs | `base` capacity | Cost ₹/month | Break-even | Net when full |
+|---|---|---|---|---|---|
+| Launch | `ctl-1` + `node-1` | 17 | 3,668 | 13 | +1,203 |
+| + `node-2` | `ctl-1` + `node-1`, `node-2` | 34 | 6,067 | 22 | +3,676 |
+| + Supabase Pro (trigger below) | same | 34 | 8,467 | 30 | +1,276 |
+| + `node-3` | `ctl-1` + `node-1`…`node-3` | 51 | 10,866 | 38 | +3,748 |
+| + HA control plane (`ctl-2`, `ctl-3`, Step 1.13) | 3 control + 3 tenant VMs | 51 | 13,264 | 47 | +1,350 |
 
-- **Out-of-pocket runway:** on the starter cell the platform costs ≈ ₹2,470/month and is net positive from 9 tenants. After Step 1.13 it costs at most ≈ ₹6,000/month until ~20 tenants, inside the budget; growing at ≈ 10 tenants means a net loss of about ₹2,800/month (5,700 − 10 × 286.55 ≈ 2,835) until the reference cell fills, which is why Step 1.13 is an owner decision, not an automatic trigger.
+(Cost = 1,199 per control VM + 2,399 per tenant VM + 70 domain + 2,400 Supabase Pro; break-even = cost ÷ 286.55 rounded up; net when full = capacity × 286.55 − cost.)
+
+- **Out-of-pocket runway:** at launch the platform costs ≈ ₹3,670/month and is net positive from 13 tenants. Stages up to Supabase Pro stay within the ≤ ₹9,000 cap. A new tenant node starts empty, so each growth step is a dip the budget absorbs until it fills: adding `node-2` at 14 tenants moves the month from +₹344 to −₹2,055 (14 × 286.55 − 6,067) until 22 tenants; this is why it is an owner decision, not an automatic trigger.
+- **HA control plane:** it adds ≈ ₹2,398/month and no tenant capacity. With `node-1` alone (cost ≈ ₹6,066) even a full `node-1` (≈ ₹4,871 net revenue) can't pay for it. It is bought when revenue covers it (in this table, from three tenant nodes) or when a customer pays for an availability commitment.
 - **Supabase Pro trigger:** ~30 paying tenants, or admin DB > 300 MB, or Supabase egress > 3.5 GB/month, or any Supabase restriction notice, whichever comes first.
-- **Growth:** a node is added only when monthly net already covers it. The capacity controller never plans beyond the owner-set `max_nodes`; when capacity is full, sign-ups join a waitlist instead of spending money.
-- Paid-capacity margins on an added 8 vCPU / 24 GB node (~25 `base` per node at ₹2,300): ≈ 69 % before payment fees, far better than hyperscaler pricing because the node is fixed-price.
+- **Growth:** beyond the cap a node is added only when monthly revenue already covers it. The capacity controller never plans beyond the owner-set `max_nodes`; when capacity is full, sign-ups join a waitlist instead of spending money.
+- Paid-capacity margin on an added 4 vCPU / 16 GB tenant node (≈ 17 `base` at ₹2,399): (5,083 − 2,399) ÷ 5,083 ≈ 53 % before payment fees, far better than hyperscaler pricing because the node is fixed-price; it pays for itself at 9 `base` tenants (2,399 ÷ 286.55 = 8.4).
 
 ---
 
@@ -227,7 +254,7 @@ On the intro price (≈ ₹1,169/month while the prepaid 24-month term lasts; �
 - Retention 7 days, weekly base backup, continuous WAL (architecture §14.1).
 - Stored in R2 ≈ `2 × db + 10.5 × wal_gb_day`. With the planning assumption `wal_gb_day = 2 % of db`, that is **≈ 2.21 × db**. Base backups are uncompressed (R2 multipart rule, spike S4); WAL is zstd-compressed.
 - Uploads leaving the cell ≈ **4.96 × db per month** (4.35 weekly bases + WAL); they count against the VMs' included transfer (checklist item 6).
-- R2 cost = `(2.21 × data − 10 GB) × US$0.015`. At full disks the reference cell can't exceed ~663 GB in R2 (≈ ₹940/month).
+- R2 cost = `(2.21 × data − 10 GB) × US$0.015`. A tenant VM full of `base` tenants (17 × 5 GB = 85 GB) stores ≈ 188 GB in R2: (187.9 − 10) × US$0.015 ≈ US$2.67 ≈ ₹256/month. Memory caps the data a tenant VM can hold at ≈ 112 GB with any plan mix (12,680 Mi of `premium` tenants at 20 GB per 2,256 Mi), ≈ ₹340/month in R2.
 - WAL PUTs per tenant per month ≤ 8,640 at `archive_timeout` 300 s (`base`) and ≤ 43,200 at 60 s (`plus`, `premium`). Upper bounds: an idle database doesn't switch WAL segments. Retention checks run every 6 h to keep LIST operations low.
 - etcd snapshots (every 6 h, 28 kept, compressed) add well under 1 GB.
 
@@ -236,10 +263,10 @@ On the intro price (≈ ₹1,169/month while the prepaid 24-month term lasts; �
 | Risk | Effect | Guard |
 |---|---|---|
 | Chosen provider raises prices or adds location fees | ceiling exceeded | checklist item 7; re-check at every renewal; the design moves to another provider as a new cell |
-| Intro price ends (Hostinger KVM 4: ₹1,099 → ₹2,399 after the prepaid term) | starter cost more than doubles | budget and break-even use the renewal price only (§1, §7) |
-| Launch provider has no private network (§2.2) | reference cell can't form as specified at Step 1.13 | S8 before Step 1.13; public-IP join with nftables allow-lists + WireGuard, or the reference cell at another provider (new cell + migration) |
-| Noisy neighbours / slow disks on value VPS | etcd or tenant latency | spike S2 measurements before launch; weekly fsync/steal alerts; move nodes if they degrade |
-| R2 growth | ≤ ₹940 per full cell | bounded by node disks; R2 usage notifications |
+| Intro prices end (Hostinger KVM 2 ₹799 → ₹1,199, KVM 4 ₹1,099 → ₹2,399 after the prepaid term) | starter cost almost doubles (₹1,968 → ₹3,668) | budget and break-even use the renewal prices only (§1, §7) |
+| Launch provider has no private network (§2.2) | `ctl-1` ↔ `node-1` traffic crosses the public network | S8 at Step 1.1; public-IP join with nftables allow-lists limited to the other node's IP, WireGuard for pod traffic, TLS for the K3s API; or another shortlisted provider |
+| Noisy neighbours / slow disks on value VPS | etcd or tenant latency | spike S2 measurements on both VMs before launch; weekly fsync/steal alerts; move nodes if they degrade |
+| R2 growth | ≈ ₹260–340 per full tenant node | bounded by tenant-node memory and disks (§8); R2 usage notifications |
 | Transfer overage | provider-specific | checklist item 6; monthly egress alert at 70 % of the included transfer |
 | Supabase Free limit or pause | admin writes stop | usage alerts at 60 %; Pro trigger; static stability keeps databases serving |
 | GitHub minutes or ghcr policy change | CI pauses / registry cost | US$0 budget; path filters; images can move to any OCI registry by changing `registries.yaml` |
@@ -256,6 +283,7 @@ On the intro price (≈ ₹1,169/month while the prepaid 24-month term lasts; �
 - K3s requirements, HA, multicloud limits, profiling: https://docs.k3s.io/installation/requirements , https://docs.k3s.io/datastore/ha-embedded , https://docs.k3s.io/networking/distributed-multicloud , https://docs.k3s.io/reference/resource-profiling
 - Node heartbeat and eviction defaults: https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/ , https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
 - AWS EC2 Mumbai prices and data transfer: https://aws.amazon.com/ec2/pricing/on-demand/ ; GCP network pricing: https://cloud.google.com/vpc/network-pricing
+- Added 2026-10-14 (two-VM layout, §2.2): AWS Lightsail bundles and the Mumbai half-transfer rule: https://aws.amazon.com/lightsail/pricing/ ; EC2 `t4g.xlarge` in `ap-south-1` at US$0.0896/h from third-party price indexes (https://instances.cloudchipr.com/aws/ec2/t4g.xlarge , https://www.devzero.io/instances/aws/t4g.xlarge; `t4g.large` taken as half), to be confirmed on the EC2 page; burstable credits: https://aws.amazon.com/ec2/instance-types/t4/ . Azure Linux pay-as-you-go prices for `B2as_v2`, `B4as_v2`, `D2as_v5`, `D4as_v5` (Central India and South India), Premium/Standard SSD managed disks, Standard static public IPv4 and internet egress, from Microsoft's retail prices API (https://prices.azure.com/api/retail/prices) and the pricing pages https://azure.microsoft.com/en-in/pricing/details/virtual-machines/linux/ , https://azure.microsoft.com/en-in/pricing/details/bandwidth/ ; cross-checked with https://www.azurespeed.com/AzureVmPricing/Standard_B2as_v2 and https://www.azurespeed.com/AzureVmPricing/Standard_D2as_v5 (same US$0.0492/h and US$0.0556/h).
 - Hostinger India VPS prices (checked 2026-10-07; hostinger.in page as read 2026-09-14, re-verify at Step 1.1): https://zoutons.com/news/hostinger-vps-hosting-price-india-2026 , https://www.hostinger.com/in/vps-hosting ; Mumbai location: https://www.hostinger.com/support/1583267-where-are-hostinger-servers-located/ ; OpenVZ discontinued: https://www.hostinger.com/support/10469992-how-to-migrate-your-vps-from-openvz-to-kvm-at-hostinger/ ; VPS help center (no private-network article found): https://www.hostinger.com/support/vps/
 - VPS price lists: https://www.digitalocean.com/pricing/droplets , https://api.vultr.com/v2/plans , https://api.linode.com/v4/linode/types , https://www.ovhcloud.com/en-in/vps/vps-india/ , https://contabo.com/en/vps/ , https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/
 - Supabase pricing, pausing, compute, connections: https://supabase.com/pricing , https://supabase.com/docs/guides/platform/free-project-pausing , https://supabase.com/docs/guides/platform/compute-and-disk , https://supabase.com/docs/guides/database/connecting-to-postgres

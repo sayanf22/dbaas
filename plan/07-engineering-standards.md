@@ -16,6 +16,7 @@ These standards keep the codebase small, secure, reliable, provider-neutral and 
 | `.kiro/steering/60-infrastructure.md` | `deploy/**` | spend cap, provider neutrality, node bootstrap and host hardening, K3s configuration (CIS hardening, etcd snapshots, upgrades), Terraform modules/state/pinning, SOPS secrets, Kubernetes manifest hardening, Flux/Helm |
 | `.kiro/steering/70-ci.md` | `.github/**` | SHA-pinned actions, least-privilege tokens, injection-safe workflows, GitHub Free compensating controls (manual deploy workflows, secret scanning with Trivy), free-minute budget, pipeline content |
 | `.kiro/steering/75-shell.md` | `**/*.sh` | strict mode, ShellCheck, quoting, no `eval`, idempotent scripts |
+| `.kiro/steering/80-dev-loop.md` | always | safety on the owner's Windows PC (nothing outside the repo deleted, no harmful commands, configs backed up before changes, ask when unsure), fast and non-hanging commands, and local verification in proportion to risk (`05-…` §6) |
 
 ## Principles
 
@@ -26,9 +27,10 @@ These standards keep the codebase small, secure, reliable, provider-neutral and 
 5. **Statically stable.** Control-plane, Supabase or Cloudflare outages never touch running databases.
 6. **Secure by default.** Tenants are hostile to each other; authorization on every object, least privilege, no secrets in logs, SSRF-guarded outbound fetches, pinned and scanned dependencies.
 7. **Observable.** Structured logs with tenant/cell/operation IDs, RED metrics, traces, an alert and runbook for every failure mode.
-8. **Tested where it breaks.** Failure paths, fuzzed parsers, cross-tenant tests, real dependencies in integration tests.
+8. **Tested where it breaks, verified in proportion to risk.** Failure paths, fuzzed parsers, cross-tenant tests, real dependencies in integration tests. Locally, each change runs the checks that can catch a mistake in it (`80-dev-loop.md`, `05-…` §6.3): docs-only changes need no test run, a one-package change runs that package's tests and linter, and security-relevant changes always get the full set. CI runs its path-filtered checks on every push.
 9. **Spend follows revenue.** Nothing billable is created unless the plan names it; the platform stays ≤ ₹9,000/month.
-10. **Provider-neutral.** No code or manifest depends on one VM provider; provider specifics live only in `deploy/terraform/modules/vm-<provider>` and the `ProviderAdapter`.
+10. **Provider-neutral.** No code or manifest depends on one VM provider (Hostinger, AWS, Azure or another); provider specifics live only in `deploy/terraform/modules/vm-<provider>` and the `ProviderAdapter`.
+11. **Safe on the owner's PC.** Nothing outside the repository on Windows is deleted or harmed; user-level configs are backed up before they change; when an action is hard to undo or its safety is unclear, ask first (`80-dev-loop.md`).
 
 ## Pull-request review checklist
 
@@ -42,7 +44,8 @@ These standards keep the codebase small, secure, reliable, provider-neutral and 
 - [ ] Migrations are expand/contract, N-1 compatible, with `lock_timeout`.
 - [ ] Logs/metrics/traces added; no secrets, bodies or unbounded labels; alert + runbook for new failure modes.
 - [ ] Tests for success and failure paths; fuzz target for new parsers; bug fixes include a regression test.
-- [ ] Linters and scanners clean (golangci-lint/gosec, clippy, cargo-deny, govulncheck, ESLint, hadolint, ShellCheck, actionlint, zizmor, Trivy); suppressions carry a reason.
+- [ ] Local checks match the change's row in `05-…` §6.3 (security-relevant changes: the full set); the PR says which ran and which didn't.
+- [ ] CI's linters and scanners clean (golangci-lint/gosec, clippy, cargo-deny, govulncheck, ESLint, hadolint, ShellCheck, actionlint, zizmor, Trivy); suppressions carry a reason.
 - [ ] Resource requests, Supabase connections and recurring cost unchanged, or the tables in `01-…`/`03-…` are updated in this PR.
 - [ ] Security-sensitive change (auth, gateway handshake, SQL safety, webhooks, crypto, IAM/RBAC) has a second reviewer.
 - [ ] `plan/` updated if a version, limit or decision changed.

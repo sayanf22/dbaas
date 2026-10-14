@@ -5,7 +5,7 @@ Research date **2026-09-29**. This file lists only what we use. Pin exact versio
 Selection rules:
 1. Production-proven, actively maintained, clear security process.
 2. Official **amd64 and arm64** builds, because the VM provider isn't chosen yet and most value-VPS providers are x86_64.
-3. Small footprint: a cell starts as one 4 vCPU / 16 GB VM and grows to three VMs (`03-cost-model.md` §6.1, §6), so every pod earns its place.
+3. Small footprint: a cell starts as two VMs, a 2 vCPU / 8 GB control VM for the whole platform and a 4 vCPU / 16 GB tenant VM (`03-cost-model.md` §6.1, §6), so every pod earns its place.
 4. Provider-neutral: runs on any Linux VM that passes the checklist in `03-…` §2.1; no managed service of one VM provider.
 5. Free at launch, or paid only from revenue; total platform cost ≤ ₹9,000/month.
 6. The same component still works at 100× scale, so growth means adding capacity, not replacing parts.
@@ -38,23 +38,23 @@ Selection rules:
 
 | Layer | Choice | Version | Why |
 |---|---|---|---|
-| VMs | Any provider passing `03-…` §2.1 (shortlisted in Step 0.0, chosen in Step 1.1; value-VPS class to meet the cap) | starter cell: 1 × 4 vCPU / 16 GB / 200 GB NVMe (planning example Hostinger KVM 4, ADR-025); reference cell: 1 × 2 vCPU / 4 GB + 2 × 8 vCPU / 24 GB NVMe | Fixed monthly price; no provider-specific services used |
+| VMs | Any provider passing `03-…` §2.1 (shortlisted in Step 0.0, chosen in Step 1.1; value-VPS class to meet the cap) | starter cell (ADR-025): control VM `ctl-1` 2 vCPU / 8 GB / 100 GB NVMe + tenant VM `node-1` 4 vCPU / 16 GB / 200 GB NVMe (planning example Hostinger KVM 2 + KVM 4; AWS and Azure priced in `03-…` §2.2); growth: more tenant VMs; HA from Step 1.13: `ctl-2`, `ctl-3` | Fixed monthly price; no provider-specific services used |
 | OS | **Ubuntu 24.04 LTS** | latest point release, unattended security updates | Long support, WireGuard in the kernel, lvm2, supported by K3s |
-| Kubernetes | **K3s**, 3 servers with **embedded etcd** | **v1.36.x** stable channel, pinned exactly (e.g. `v1.36.4+k3s1`) | CNCF-certified single-binary Kubernetes; HA control plane on our own VMs at no fee; the original blueprint's choice |
+| Kubernetes | **K3s**: servers with **embedded etcd** on control VMs (1 at launch, 3 from Step 1.13), agents on tenant VMs | **v1.36.x** stable channel, pinned exactly (e.g. `v1.36.4+k3s1`) | CNCF-certified single-binary Kubernetes; HA control plane on our own VMs at no fee; the original blueprint's choice |
 | Container runtime | containerd (bundled with K3s) | bundled | Runs our Docker-built OCI images |
-| Pod networking | flannel **`wireguard-native`** (bundled) | bundled | Encrypts node-to-node pod traffic over the provider's private network |
+| Pod networking | flannel **`wireguard-native`** (bundled) | bundled | Encrypts node-to-node pod traffic over the provider's private network, or over public IPs where there is none |
 | NetworkPolicy | K3s embedded network-policy controller (kube-router, bundled) | bundled | Enforces Kubernetes NetworkPolicy without an extra CNI |
-| DNS in cluster | CoreDNS (bundled, 2 replicas) | bundled | Standard |
+| DNS in cluster | CoreDNS (bundled, 2 replicas: one on a control VM, one on a tenant VM) | bundled | Standard; the tenant-VM replica keeps name resolution working while `ctl-1` is down |
 | Metrics API | metrics-server (bundled) | bundled | `kubectl top`, capacity reports |
 | Disabled K3s add-ons | Traefik, ServiceLB, local-path-provisioner | — | HTTP enters through Cloudflare Tunnel; Postgres through the gateway's hostPort; local-path ignores PVC sizes |
 | Registry mirror | K3s embedded registry mirror (**Spegel**) | bundled | Nodes share pulled images; restarts don't depend on ghcr.io |
 | Upgrades | **system-upgrade-controller** | pin at install | One-node-at-a-time K3s upgrades from git |
 | Secrets | **SOPS** + **age**, decrypted by Flux's kustomize-controller; K3s `secrets-encryption` at rest | SOPS pin at install | No paid secret manager; secrets live encrypted in git and only decrypted inside the cell |
 | Admin access | **Cloudflare Tunnel + Access** for SSH and `kubectl` (`cloudflared` as a systemd service on each VM) | cloudflared pinned | No public SSH or API port; MFA-protected access at no cost |
-| Host firewall | nftables (rules from the node bootstrap) + the provider's firewall where offered | OS package | Only TCP 5432 public on tenant nodes |
+| Host firewall | nftables (rules from the node bootstrap) + the provider's firewall where offered | OS package | Only TCP 5432 public on tenant VMs; nothing public on control VMs; K3s ports only from the cell's node IPs |
 | Registry | **ghcr.io** (private images, GitHub Free) | service | Container storage and transfer currently free; our images plus third-party images mirrored by digest (`docker buildx imagetools create`), so Docker Hub limits never matter |
 | Transactional email | SMTP service with a free tier ≥ 3,000/month (candidates: Resend, Brevo; chosen in Step 0.0) | service | Supabase Auth custom SMTP, Alertmanager, our notifications |
-| IaC | **Terraform** + `cloudflare/cloudflare` provider; the chosen VM provider's Terraform provider in `modules/vm-<provider>` if it has one | providers pinned to exact versions at install | One IaC tool; node bootstrap is identical with or without it |
+| IaC | **Terraform** + `cloudflare/cloudflare` provider; the chosen VM provider's Terraform provider in `modules/vm-<provider>` if it has one (for example `vm-hostinger`, `vm-aws`, `vm-azure`) | providers pinned to exact versions at install | One IaC tool; node bootstrap is identical with or without it |
 | Terraform state | R2 bucket via the S3 backend; applies run only from CI in one concurrency group (test `use_lockfile` against R2 before relying on it) | — | Free tier, outside the cell, bucket-lock protected |
 | GitOps | **Flux** | **v2.9.5** | Pull-based; no inbound access to the K3s API; native SOPS decryption |
 | Containers | **Docker** Buildx for images (CI and local); Docker Desktop (WSL2) or Docker Engine for local dev | pin at install | One image format everywhere; k3d and `supabase start` run on Docker |

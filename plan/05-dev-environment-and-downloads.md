@@ -5,8 +5,8 @@ Target machine: Windows. Recommended: **WSL2 Ubuntu 24.04** for all build and cl
 **Status of this PC (2026-09-30):**
 - WSL2 Ubuntu 24.04.5 LTS (default user `dev`, 8 GB / 4 CPUs via `.wslconfig`) and Docker Desktop 29.8.1 with WSL integration. Both virtual disks live on D: (`D:\Offload\WSL\Ubuntu-24.04`, `D:\Offload\DockerDesktopWSL`).
 - Installed in Ubuntu, versions from `tools.versions`: Go 1.27.1, Rust 1.98.1 (clippy, rustfmt), Node 24.21.0 + pnpm, Supabase CLI, kubectl 1.36, Helm, k3d, psql/pgbench 18.6, Terraform, cloudflared, Trivy, gh, SOPS, and the lint, test and release tools. A k3d cluster on K3s v1.36.4+k3s1 was created, ran a pod and was deleted.
-- Not installed yet (added at the step that needs them): age, Flux CLI, kubectl-cnpg, yq, the cargo supply-chain tools, the Go codegen tools (sqlc, goose, oapi-codegen, govulncheck; installed by `hack/install-tools.sh` in Step 0.1), the K3s VM bundle, and the AWS CLI.
-- 2026-09-30 update: the remaining tools (age, yq, Flux, kubectl-cnpg, sqlc, goose, oapi-codegen, govulncheck, cargo-deny, cargo-nextest) come from `hack/install-tools.sh` into `~/.local/bin`. Upstream manifests are vendored in `deploy/vendor/` (SHA256SUMS + `images.lock` digests); source clones for reference live in `third_party/` (git-ignored). `task cell:up` starts the local starter cell; `hack/capacity-test.sh 10 base` passed.
+- Not installed yet (added at the step that needs them): age, Flux CLI, kubectl-cnpg, yq, the cargo supply-chain tools, the Go codegen tools (sqlc, goose, oapi-codegen, govulncheck; installed by `hack/install-tools.sh` in Step 0.1), the K3s VM bundle, and a hyperscaler CLI (AWS or Azure, only if that provider is chosen at Step 1.1).
+- 2026-09-30 update: the remaining tools (age, yq, Flux, kubectl-cnpg, sqlc, goose, oapi-codegen, govulncheck, cargo-deny, cargo-nextest) come from `hack/install-tools.sh` into `~/.local/bin`. Upstream manifests are vendored in `deploy/vendor/` (SHA256SUMS + `images.lock` digests); source clones for reference live in `third_party/` (git-ignored). `task cell:up` starts the local starter cell (since 2026-10-14 the two-VM shape: 1 server + 1 tainted agent); `hack/capacity-test.sh 10 base` passed on the earlier one-server shape.
 - Next: Step 0.0 (accounts, incl. the GitHub org and the GitHub MCP token), then the rest of Step 0.1 (push, first green CI run).
 
 **Docker's role:** every backend component is packaged as a container image built with Docker Buildx (locally and in CI) and stored in ghcr.io. Local development runs on Docker: **k3d** runs real K3s servers and agents as Docker containers, and `supabase start` runs the Supabase stack in Docker. The production VMs don't run Docker; K3s runs the same images with its bundled containerd.
@@ -31,9 +31,9 @@ Checked 2026-09-29. Everything below is free to create; the "card" column says w
 | 9 | **GitHub OAuth App** (in the org) | "Sign in with GitHub" in Supabase Auth | free | no | `https://github.com/organizations/<org>/settings/applications` , https://supabase.com/docs/guides/auth/social-login/auth-github |
 | 10 | **Renovate** GitHub app | dependency, image-digest, K3s-version and action-SHA updates | free for private repos | no | https://github.com/apps/renovate |
 | 11 | **Razorpay** | subscriptions (UPI AutoPay, cards) | standard, ₹199 one-time KYC | no (PAN + bank account instead) | https://dashboard.razorpay.com/signup |
-| 12 | **VM provider** (Step 1.1, not now) | the starter VM of cell `c1` (4 vCPU / 16 GB, example Hostinger KVM 4), then the three VMs of the reference cell at Step 1.13 | chosen against the checklist in `03-…` §2.1, within ₹2,400/month for the starter VM and ₹5,600/month for the reference cell, at renewal prices | yes (at Step 1.1) | shortlist recorded in ADR-024 |
+| 12 | **VM provider** (Step 1.1, not now) | the two VMs of cell `c1`: control VM `ctl-1` (2 vCPU / 8 GB) + tenant VM `node-1` (4 vCPU / 16 GB), example Hostinger KVM 2 + KVM 4; later growth tenant VMs and, at Step 1.13, `ctl-2`/`ctl-3` | chosen against the checklist in `03-…` §2.1, within ₹3,600/month for the starter cell at renewal prices (Hostinger, AWS and Azure are compared in `03-…` §2.2) | yes (at Step 1.1) | shortlist recorded in ADR-024 |
 
-You don't need: a Docker Hub paid plan, a GitHub paid plan, a Supabase paid plan (until its trigger), a Cloudflare paid plan, a Vercel account, or an AWS/GCP account.
+You don't need: a Docker Hub paid plan, a GitHub paid plan, a Supabase paid plan (until its trigger), a Cloudflare paid plan, a Vercel account, or an AWS, Azure or GCP account (one is opened only if that provider is chosen at Step 1.1).
 
 ### 1.1 The accounts, in order
 
@@ -46,7 +46,7 @@ You don't need: a Docker Hub paid plan, a GitHub paid plan, a Supabase paid plan
 7. **GitHub OAuth App:** in the org's settings → OAuth Apps → New, callback `https://<project-ref>.supabase.co/auth/v1/callback`.
 8. **Renovate:** install the app on the monorepo only.
 9. **Razorpay:** sign up → KYC as an individual (PAN, Aadhaar/DigiLocker, savings or current bank account; GST optional). Live payments need an approved website with About, Contact, Pricing, Terms, Privacy, Cancellation/Refund and Shipping pages, a sample invoice and a test login; these pages ship with the public site in Step 1.11. Master KYC guide: https://razorpay.com/docs/payments/business-types-kyc-documents/ , website rules: https://razorpay.com/docs/payments/dashboard/account-settings/business-website-details/ . Tax registration (GST) and the wording of legal pages are decisions for you and your accountant or lawyer.
-10. **VM provider shortlist (paper only):** list 2–3 providers that seem to meet `03-…` §2.1 with their prices; no account yet. The choice and sign-up happen at Step 1.1, after Phase 0.
+10. **VM provider shortlist (paper only):** list 2–3 providers that seem to meet `03-…` §2.1 with their prices for the two VM shapes (2 vCPU / 8 GB control, 4 vCPU / 16 GB tenant); no account yet. The choice and sign-up happen at Step 1.1, after Phase 0.
 
 ---
 
@@ -58,7 +58,7 @@ winget install --id Git.Git -e
 winget install --id Docker.DockerDesktop -e   # WSL 2 engine + Ubuntu-24.04 integration
 ```
 
-`$env:USERPROFILE\.wslconfig` gives WSL2 8 GB RAM and 4 CPUs (`[wsl2]`, `memory=8GB`, `processors=4`); a 3-server + 1-agent k3d cell plus the local Supabase stack fit in that.
+`$env:USERPROFILE\.wslconfig` gives WSL2 8 GB RAM and 4 CPUs (`[wsl2]`, `memory=8GB`, `processors=4`); the k3d cell (the `reference` profile's 3 servers + 1 agent at most) plus the local Supabase stack fit in that.
 
 Editor extensions (Kiro / VS Code): Go, rust-analyzer, YAML, Kubernetes, HashiCorp Terraform, ESLint, Prettier, Tailwind CSS IntelliSense, Even Better TOML, Markdown Mermaid preview.
 
@@ -177,10 +177,11 @@ Install cosign, syft, Trivy, golangci-lint, GoReleaser, sonobuoy, k6, k9s and yq
 
 ```bash
 # SSH to a node through Cloudflare Access (no public SSH port). One-time ~/.ssh/config entry:
-#   Host node-1
-#     HostName ssh-node-1.admin.example.com
+#   Host ctl-1 node-1
+#     HostName ssh-%h.admin.example.com
 #     ProxyCommand cloudflared access ssh --hostname %h
-ssh node-1
+ssh ctl-1                                 # control VM (K3s server, platform)
+ssh node-1                                # tenant VM (databases)
 
 # kubectl through Cloudflare Access (no public K3s API port)
 cloudflared access tcp --hostname k8s-c1.admin.example.com --url 127.0.0.1:1234 &
@@ -200,11 +201,48 @@ The kubeconfig for `c1` points at `https://k8s-c1.admin.example.com` with the cl
 
 ## 6. Local development loop
 
+The binding rules are in `.kiro/steering/80-dev-loop.md` (loaded automatically); this section summarizes them.
+
+### 6.1 Safety on this PC
+
+- Nothing outside this repository on Windows is deleted, overwritten or moved, and no user data is deleted anywhere (files, folders, WSL distros, Docker volumes that aren't the local cell's, browser or app data). Only generated, disposable items inside the repo or the agent's own temp dirs (`%TEMP%\dbc*`) are cleaned up.
+- No command that can damage the machine or its data: disk or partition tools, registry edits, `wsl --unregister`, driver or BIOS changes, disabling Defender or the firewall, mass permission changes, `git push --force`, `git reset --hard`, `git clean -f`.
+- A user-level config file (for example `.wslconfig`) is backed up before it is changed, as a copy next to it with a dated suffix, and the backup location is reported.
+- Reversible actions first; anything hard to undo or touching data outside the repo is explained and asked for first. When unsure whether something is safe, ask instead of doing it.
+- Restarting the tools the work depends on (Docker Desktop, WSL, the k3d cell) is allowed and is mentioned in the summary.
+
+### 6.2 Speed
+
+- Every command has a timeout; long jobs run in the background with a bounded wait. No `sleep` over 30 s: poll in short intervals with an upper bound and stop on terminal errors (`CrashLoopBackOff`, `ImagePullBackOff`, failed Jobs, `Error` conditions).
+- Nothing waits on an interactive prompt: in WSL `GIT_TERMINAL_PROMPT=0` and stdin closed (`</dev/null`) for tools that may prompt (pnpm); pushes use Windows git, which holds the credentials.
+- The local cell is recreated only when its profile or K3s configuration changed; manifest changes roll out with `task cell:sync`.
+- Trivy `fs` runs on a copy of the repo on the Linux filesystem (on `/mnt/d` it times out). CI status is checked at intervals of 2 minutes or more.
+- From PowerShell, bash runs as a script file through `wsl -d Ubuntu-24.04 -u dev -- bash -l <file>`, never as inline multi-line bash; independent work runs in parallel.
+
+### 6.3 Verify in proportion to risk
+
+Local runs cover what can catch a mistake in what changed, not every check every time; CI still runs its path-filtered checks on every push.
+
+| Change | Local checks |
+|---|---|
+| Docs, comments, steering, plan text only | none; re-read the change (links, tables, numbers) |
+| One small, low-risk edit (a constant, a message, a config value with no code path change) | the one linter or test that covers that file |
+| Code in one package/crate/script | that package's tests + its linter (`go test ./pkg/...`, `cargo test -p`, `shellcheck file`) |
+| Cross-package code, a dependency bump, generated code | the language's full lint + tests (`task lint` part for that language, `go test -race ./...`) |
+| `deploy/` manifests | `bash hack/check-manifests.sh`, then `task cell:sync` if the cell runs |
+| K3s config, cell scripts, operator/gateway behaviour, anything security-relevant (auth, RBAC, NetworkPolicy, secrets, SQL safety) | the above + `task cell:test`; the reference shape (`PROFILE=reference`) only when the K3s configuration changed |
+| End of a build-plan step | the step's full "Done when" set, once |
+
+Security-relevant changes never take the shortcut, and when unsure which row applies, the stricter one does. A failing check is fixed or explained, never skipped silently, and every summary says which checks ran and which didn't.
+
+### 6.4 Commands
+
 One-time host preparation (root, from Windows): `wsl -d Ubuntu-24.04 -u root -- bash hack/local-host.sh setup dev`. It loads the WireGuard and thin-pool modules at boot, installs lvm2, xfsprogs and the pinned `lvmd`, and adds a sudo rule that lets `dev` run only the root-owned copy's `lvm-up`, `lvm-down` and `status` commands, which `hack/cell.sh` uses for the TopoLVM loop-file volume groups.
 
 ```bash
-task cell:up    # k3d cell "local" (pinned K3s v1.36, same deploy/k3s config as production; PROFILE=starter: 1 server,
-                # default; PROFILE=reference: 3 servers + 1 agent) + Flux from a local OCI artifact with a local age key
+task cell:up    # k3d cell "local" (pinned K3s v1.36, same deploy/k3s config as production; PROFILE=starter, the default:
+                # 1 server pool=control + 1 agent pool=tenant, tainted; PROFILE=reference: 3 servers pool=control + 1 agent
+                # pool=tenant, tainted) + Flux from a local OCI artifact with a local age key
                 # + TopoLVM (host lvmd, loop VG per tenant node) + CNPG + Barman plugin + SeaweedFS (local S3, ADR-026)
                 # + cert-manager (self-signed) + VictoriaMetrics single
 task cell:sync  # roll out changes under deploy/ through Flux, as production does
