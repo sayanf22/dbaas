@@ -46,4 +46,4 @@ dbcloud is a self-built, multi-tenant managed PostgreSQL service (DBaaS). The pl
 
 ## Steering files
 
-Always loaded: this file, `10-engineering-standards.md`, `15-security-and-reliability.md`. Loaded when you touch matching files: `20-go.md` (`**/*.go`), `30-rust.md` (`gateway/**`), `35-sql.md` (`db/**`), `40-kubernetes-operator.md` (`**/*operator/**`), `50-web.md` (`web/**`), `55-containers.md` (`**/*Dockerfile*`), `60-infrastructure.md` (`deploy/**`), `70-ci.md` (`.github/**`), `75-shell.md` (`**/*.sh`).
+Always loaded: this file, `10-engineering-standards.md`, `15-security-and-reliability.md`, `80-dev-loop.md`. Loaded when you touch matching files: `20-go.md` (`**/*.go`), `30-rust.md` (`gateway/**`), `35-sql.md` (`db/**`), `40-kubernetes-operator.md` (`**/*operator/**`), `50-web.md` (`web/**`), `55-containers.md` (`**/*Dockerfile*`), `60-infrastructure.md` (`deploy/**`), `70-ci.md` (`.github/**`), `75-shell.md` (`**/*.sh`).
