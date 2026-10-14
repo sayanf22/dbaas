@@ -1,8 +1,0 @@
-# PriorityClasses every cell uses (dbcloud-platform, dbcloud-tenant). Applied twice on purpose: by the cell
-# bootstrap together with Flux (deploy/flux/system includes this directory, because Flux's own pods use
-# dbcloud-platform and can't start before it exists), then reconciled by the Flux Kustomization
-# `priority-classes`, the first infrastructure layer, so drift is corrected like everywhere else.
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - priority-classes.yaml

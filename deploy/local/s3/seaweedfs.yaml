@@ -46,7 +46,6 @@ spec:
       serviceAccountName: seaweedfs
       automountServiceAccountToken: false
       nodeSelector: {dbcloud.io/pool: tenant}
-      priorityClassName: dbcloud-platform    # stands in for R2, which no tenant can take down either
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

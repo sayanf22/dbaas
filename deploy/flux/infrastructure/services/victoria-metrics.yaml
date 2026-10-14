@@ -39,139 +39,15 @@ spec:
       # 14 days locally; production sizes retention against disk in Step 1.7.
       retentionPeriod: 14d
       nodeSelector: {dbcloud.io/pool: tenant}
-      priorityClassName: dbcloud-platform
       persistentVolume:
         enabled: true
         storageClassName: tenant-local
         size: 4Gi
-      # 256 Mi was OOM-killed seconds after the first scrape with the chart's default job list (2026-09-30).
-      # 512 Mi stays until the allow-listed scrape below is measured on the cell; VictoriaMetrics sizes its
-      # caches from the cgroup limit (60 % by default).
+      # 256 Mi was OOM-killed seconds after the first scrape (2026-09-30); 512 Mi, then sized from the
+      # measured working set. VictoriaMetrics sizes its caches from the cgroup limit (60 % by default).
       resources:
         requests: {cpu: 20m, memory: 512Mi}
         limits: {memory: 512Mi}
       scrape:
+        # Built-in scrape of the Kubernetes API, kubelets and cAdvisor (chart default job list).
         enabled: true
-        # The chart's default job list, rewritten for K3s. K3s runs the API server, scheduler, controllers
-        # and kubelet in one process with one metrics registry, so /metrics on the API server and on every
-        # kubelet each return the same ~57k series, mostly latency histograms nothing here reads. Measured
-        # on the local cell (2026-09-30): 133k active series, 113k of them from those two jobs, and the
-        # 256 Mi limit was OOMKilled. Each job below keeps an allow-list of what the alerts and dashboards of
-        # Step 1.7 need: API server errors and object counts, kubelet health and volume usage, per-container
-        # CPU, memory, OOM and throttling from cAdvisor. Annotated pods (Flux, cert-manager, TopoLVM, CNPG
-        # exporters later) are kept apart from their Go-runtime histograms. The chart's blackbox and
-        # `-slow` jobs are left out: nothing in the cell uses them. TLS is verified against the cluster CA
-        # (the chart default skips verification; 15-security §6).
-        config:
-          global:
-            scrape_interval: 15s
-          scrape_configs:
-            - job_name: victoriametrics
-              static_configs: [{targets: [localhost:8428]}]
-            - job_name: kubernetes-apiservers
-              kubernetes_sd_configs: [{role: endpoints}]
-              scheme: https
-              bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-              tls_config:
-                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-                server_name: kubernetes.default.svc     # a SAN of every K3s API server certificate
-              relabel_configs:
-                - action: keep
-                  source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
-                  regex: default;kubernetes;https
-              metric_relabel_configs:
-                - action: keep
-                  source_labels: [__name__]
-                  regex: apiserver_(request_total|current_inflight_requests|storage_objects|storage_size_bytes|flowcontrol_rejected_requests_total)
-            - job_name: kubernetes-nodes
-              kubernetes_sd_configs: [{role: node}]
-              scheme: https
-              bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-              tls_config:
-                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              relabel_configs:
-                - action: labelmap
-                  regex: __meta_kubernetes_node_label_(.+)
-              metric_relabel_configs:
-                # Kubelet health, evictions, PVC usage (tenant disk alerts) and the K3s process itself.
-                - action: keep
-                  source_labels: [__name__]
-                  regex: kubelet_(volume_stats_(capacity_bytes|available_bytes|used_bytes|inodes|inodes_free|inodes_used)|running_pods|running_containers|node_name|evictions|pleg_relist_duration_seconds_(sum|count)|runtime_operations_errors_total|certificate_manager_server_ttl_seconds|restarted_pods_total)|process_(resident_memory_bytes|cpu_seconds_total|open_fds|max_fds)|go_goroutines
-            - job_name: kubernetes-nodes-cadvisor
-              kubernetes_sd_configs: [{role: node}]
-              scheme: https
-              metrics_path: /metrics/cadvisor
-              honor_timestamps: false
-              bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
-              tls_config:
-                ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              relabel_configs:
-                - action: labelmap
-                  regex: __meta_kubernetes_node_label_(.+)
-                - source_labels: [__metrics_path__]
-                  target_label: metrics_path
-              metric_relabel_configs:
-                - action: keep
-                  source_labels: [__name__]
-                  regex: container_(cpu_usage_seconds_total|cpu_cfs_periods_total|cpu_cfs_throttled_periods_total|memory_working_set_bytes|memory_rss|oom_events_total|spec_memory_limit_bytes|network_receive_bytes_total|network_transmit_bytes_total|fs_reads_bytes_total|fs_writes_bytes_total)|machine_(cpu_cores|memory_bytes)
-            - job_name: kubernetes-service-endpoints
-              kubernetes_sd_configs: [{role: endpoints}]
-              relabel_configs:
-                - action: drop
-                  source_labels: [__meta_kubernetes_pod_container_init]
-                  regex: "true"
-                - action: keep_if_equal
-                  source_labels: [__meta_kubernetes_service_annotation_prometheus_io_port, __meta_kubernetes_pod_container_port_number]
-                - action: keep
-                  source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
-                  regex: "true"
-                - action: replace
-                  source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
-                  regex: (https?)
-                  target_label: __scheme__
-                - action: replace
-                  source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
-                  regex: (.+)
-                  target_label: __metrics_path__
-                - action: replace
-                  source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
-                  regex: ([^:]+)(?::\d+)?;(\d+)
-                  replacement: $1:$2
-                  target_label: __address__
-                - action: labelmap
-                  regex: __meta_kubernetes_service_label_(.+)
-                - {action: replace, source_labels: [__meta_kubernetes_namespace], target_label: namespace}
-                - {action: replace, source_labels: [__meta_kubernetes_service_name], target_label: service}
-                - {action: replace, source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
-              metric_relabel_configs:
-                - action: drop
-                  source_labels: [__name__]
-                  regex: (go|controller_runtime|workqueue|rest_client)_.+_bucket
-            - job_name: kubernetes-pods
-              kubernetes_sd_configs: [{role: pod}]
-              relabel_configs:
-                - action: drop
-                  source_labels: [__meta_kubernetes_pod_container_init]
-                  regex: "true"
-                - action: keep_if_equal
-                  source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port, __meta_kubernetes_pod_container_port_number]
-                - action: keep
-                  source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
-                  regex: "true"
-                - action: replace
-                  source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
-                  regex: (.+)
-                  target_label: __metrics_path__
-                - action: replace
-                  source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
-                  regex: ([^:]+)(?::\d+)?;(\d+)
-                  replacement: $1:$2
-                  target_label: __address__
-                - action: labelmap
-                  regex: __meta_kubernetes_pod_label_(.+)
-                - {action: replace, source_labels: [__meta_kubernetes_namespace], target_label: namespace}
-                - {action: replace, source_labels: [__meta_kubernetes_pod_name], target_label: pod}
-              metric_relabel_configs:
-                - action: drop
-                  source_labels: [__name__]
-                  regex: (go|controller_runtime|workqueue|rest_client)_.+_bucket

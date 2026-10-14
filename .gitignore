@@ -1,10 +1,8 @@
 # Upstream source clones fetched by `task vendor:sources` (reference only; pinned in deploy/vendor/sources.lock).
 /third_party/
 
-# Local-only state: kubeconfigs, generated credentials, test output, agent reports.
+# Local-only state: kubeconfigs, generated credentials, test output.
 /.local/
-# Git worktrees for parallel work on other branches (git worktree add .worktrees/<name>).
-/.worktrees/
 # Per-developer local S3 identity, SOPS-encrypted by hack/cell-flux.sh (never committed).
 /deploy/local/s3/secret.sops.yaml
 *.kubeconfig

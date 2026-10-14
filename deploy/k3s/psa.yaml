@@ -20,7 +20,7 @@ plugins:
         usernames: []
         runtimeClasses: []
         namespaces:
-          - kube-system       # K3s components (CoreDNS, Spegel)
+          - kube-system       # K3s components (CoreDNS, metrics-server, Spegel)
           - topolvm-system    # TopoLVM node plugin: privileged, mounts block devices
           - dbcloud-edge      # pg-gateway DaemonSet: hostPort 5432
           - observability     # node-exporter, Fluent Bit: host paths and host network

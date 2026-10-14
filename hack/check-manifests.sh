@@ -14,7 +14,7 @@ k8s_version="1.36.0"   # matches the pinned K3s v1.36 minor in tools.versions
 crd_schemas='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 # Kustomize roots that Flux applies (deploy/flux/clusters/local/*.yaml). They reference deploy/vendor, which
 # is outside each root, hence LoadRestrictionsNone (kustomize-controller builds the same way).
-layers=(flux/system flux/infrastructure/priority-classes flux/infrastructure/cert-manager flux/infrastructure/controllers flux/infrastructure/services flux/clusters/local)
+layers=(flux/system flux/infrastructure/cert-manager flux/infrastructure/controllers flux/infrastructure/services flux/clusters/local)
 
 # Temporary directory for rendered manifests; global so the EXIT trap can still see it after main returns.
 work=""

@@ -21,11 +21,6 @@ patches:
         path: /data/SIDECAR_IMAGE
         # base64 of ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.15.0@sha256:06c78deca670525daa35fb1e5323159092785d11cf87b86217bdd5c679a41a84
         value: Z2hjci5pby9jbG91ZG5hdGl2ZS1wZy9wbHVnaW4tYmFybWFuLWNsb3VkLXNpZGVjYXI6djAuMTUuMEBzaGEyNTY6MDZjNzhkZWNhNjcwNTI1ZGFhMzVmYjFlNTMyMzE1OTA5Mjc4NWQxMWNmODdiODYyMTdiZGQ1YzY3OWE0MWE4NA==
-  - target: {kind: Deployment, namespace: cnpg-system}
-    patch: |
-      - op: add
-        path: /spec/template/spec/priorityClassName
-        value: dbcloud-platform
   # Upstream sets requests 100m/100Mi and limits 100m/200Mi; CPU-throttling the operator slows every
   # tenant's reconcile, so the CPU limit goes and memory request = limit. Measured 85 Mi idle.
   - target: {kind: Deployment, namespace: cnpg-system, name: cnpg-controller-manager}

@@ -44,25 +44,13 @@ spec:
       reference: 0.41.1@sha256:70548dbe0c6addcccf79a557f29e95db2e6dc2cba2102988c91f30086004d0fc
     lvmd:
       managed: false             # lvmd runs on the host, one per tenant node
-    # The chart's own `topolvm` PriorityClass is replaced by the cell-wide dbcloud-platform (same value).
-    priorityClass:
-      enabled: false
     controller:
       # One replica in the local cell; the production overlay (Step 1.3) sets 2 with leader election.
       replicaCount: 1
       nodeSelector: {dbcloud.io/pool: tenant}
-      priorityClassName: dbcloud-platform
     node:
       # Only tenant nodes have a tenantvg and an lvmd.
       nodeSelector: {dbcloud.io/pool: tenant}
-      priorityClassName: dbcloud-platform
-      metrics:
-        # Volume-group size and free space per node (topolvm_volumegroup_*) feed the capacity alerts. The
-        # chart's default annotation names the port, but VictoriaMetrics' kubernetes-pods job matches the
-        # port number and needs prometheus.io/scrape.
-        annotations:
-          prometheus.io/scrape: "true"
-          prometheus.io/port: "8080"
     snapshot:
       # Backups go through Barman to object storage, not CSI snapshots; K3s ships no snapshot CRDs.
       enabled: false
